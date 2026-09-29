@@ -65,7 +65,9 @@ def test_transmits_saved_snapshot_receives_and_records(tmp_path):
         assert transport.closed and not transport.connected
         assert not sessions.stop(session.session_id)
         path = experiment.sessions.results.list()[0]["recording_path"]
-        with open(path) as recording:
+        # 기록 파일은 UTF-8로 쓴다. 인코딩을 생략하면 Windows에서 cp1252로 읽어
+        # 한글이 포함된 줄에서 UnicodeDecodeError가 난다.
+        with open(path, encoding="utf-8") as recording:
             records = [json.loads(line) for line in recording]
         assert any(row.get("kind") == "robot" and row["session_id"] == session.session_id for row in records)
         assert "데모 로봇" in experiment.robot_status()

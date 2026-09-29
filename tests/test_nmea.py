@@ -26,9 +26,12 @@ def test_parse_rtk_fix_and_missing_fix():
 
 def test_replay_uses_first_valid_start_and_recorded_velocity(tmp_path):
     path = tmp_path / "trip.nmea"
+    # NMEA는 ASCII 프로토콜이고 NmeaReplay도 ascii로 읽는다. 쓸 때 인코딩을
+    # 생략하면 Windows에서 cp1252가 되므로 호환되는 ascii를 명시한다.
     path.write_text(line(100, "NONE", 0, 0, status="INS_ALIGNING")
                     + line(101, "INS_RTKFIXED", 37.2, 126.7, 3, 4)
-                    + line(102, "INS_RTKFIXED", 37.201, 126.702, 6, 8))
+                    + line(102, "INS_RTKFIXED", 37.201, 126.702, 6, 8),
+                    encoding="ascii")
     replay = NmeaReplay(path, SystemClock())
     replay.prepare()
     assert replay.sensor_samples("s", 0, 1, "정상")[0].value is None
