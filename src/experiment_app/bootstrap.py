@@ -1,5 +1,7 @@
 import argparse
+import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from experiment_app.demo.fixtures import fixtures, schemas, CHANNELS, BASIC_FIELDS, STEP_FIELDS, SCENARIOS
 from experiment_app.infrastructure.repositories import LocalTestRepository
@@ -88,7 +90,80 @@ def emit(body, report=None):
     safe_print(body)
 
 
+def alert(body, title="MECHLab"):
+    """시작 실패를 사용자가 볼 수 있는 곳에 남긴다.
+
+    Windows GUI 빌드(console=False)는 stdout/stderr가 없다. 그래서 종료 안내나
+    예외 추적이 전부 사라지고, 사용자에게는 '실행했는데 아무 반응이 없음'으로만
+    보인다. 세 곳에 동시에 남긴다.
+
+    1) 실행 파일 옆 오류 로그 파일 — 항상 남으므로 현장 점검에 쓴다.
+    2) 네이티브 메시지 박스 — wx가 아직 없거나 죽은 상태일 수 있어 Windows에서는
+       ctypes로 user32를 직접 부른다.
+    3) 표준 출력 — 콘솔에서 실행했을 때.
+    """
+    from experiment_app import paths
+    log = None
+    try:
+        log = paths.external_root() / "MECHLab-오류.txt"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(body + "\n", encoding="utf-8")
+    except OSError:
+        log = None
+    safe_print(body)
+    shown = body if log is None else f"{body}\n\n자세한 내용: {log}"
+    try:
+        if sys.platform == "win32":
+            # windowed 빌드에는 콘솔이 없어 이 창이 유일한 안내다. wx가 아직 초기화되지
+            # 않았거나 죽은 뒤일 수 있으므로 wx를 거치지 않고 user32를 직접 부른다.
+            import ctypes
+            # MB_OK | MB_ICONERROR | MB_SETFOREGROUND
+            ctypes.windll.user32.MessageBoxW(None, shown, title, 0x10 | 0x10000)
+            return
+        # macOS/Linux 개발 실행에는 콘솔이 있어 위 출력이 보인다. 여기서 wx.App을 새로
+        # 만들면 이벤트 루프 없이 모달이 떠 프로세스가 멈출 수 있으므로, 이미 App이
+        # 있을 때만(=GUI 시작 후 실패) 창으로 알린다.
+        import wx
+        if wx.GetApp() is not None:
+            wx.MessageBox(shown, title, wx.OK | wx.ICON_ERROR)
+    except Exception:
+        # 안내 표시 실패가 종료 코드와 로그 파일을 무효화해서는 안 된다.
+        pass
+
+
+def write_startup_log(notices, data_dir, map_pack, nmea_path):
+    """시작 경로와 안내를 실행 파일 옆 로그에 남긴다.
+
+    windowed 빌드는 콘솔이 없어 진단 출력이 전부 사라진다. 창이 뜨지 않았을 때
+    이 파일이 유일한 단서다. 로그 작성 실패가 실행을 막아서는 안 된다.
+    """
+    from experiment_app import paths
+    lines = [f"MECHLab 시작 {datetime.now().astimezone().isoformat(timespec='seconds')}"]
+    lines += [f"{key}: {value}" for key, value in paths.describe().items()]
+    lines += [f"사용할 data_dir: {data_dir}", f"사용할 map_pack: {map_pack}",
+              f"사용할 nmea: {nmea_path or '없음 (내장 데모 센서)'}"]
+    lines += notices
+    try:
+        target = paths.external_root() / "MECHLab-시작로그.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def main():
+    """진입점. 어떤 예외도 화면에 보이는 안내로 바꿔서 끝낸다."""
+    try:
+        return run()
+    except SystemExit:
+        raise
+    except BaseException:
+        import traceback
+        alert("프로그램을 시작하지 못했습니다.\n\n" + traceback.format_exc())
+        raise SystemExit(1)
+
+
+def run():
     from experiment_app import paths
     parser = argparse.ArgumentParser(description="MECHLab 데모 실험 관리")
     parser.add_argument("--data-dir", type=Path, default=None,
@@ -120,24 +195,30 @@ def main():
     if args.self_check:
         from experiment_app.self_check import run
         raise SystemExit(run(args.report))
-    if nmea_path is None:
-        # parser.error는 한글을 stderr로 쓴다. cp1252 콘솔이나 windowed 빌드에서는
-        # 그 자체가 죽거나 아무것도 보이지 않으므로 safe_print로 안내하고 종료한다.
-        safe_print(f"재생할 NMEA 파일을 찾지 못했습니다. {paths.external_root() / 'nmea'} 폴더에 "
-                   ".nmea 파일을 넣거나 --nmea <파일>을 지정하세요.")
-        raise SystemExit(2)
-    if not Path(nmea_path).is_file():
+    explicit_nmea = args.nmea or os.environ.get(paths.NMEA_ENV)
+    if explicit_nmea and not Path(explicit_nmea).is_file():
+        # 사용자가 직접 지정한 파일이 없으면 조용히 다른 것으로 바꾸지 않는다.
         # 여기서 막지 않으면 GUI가 뜬 뒤 재생 단계에서야 실패한다.
-        safe_print(f"지정한 NMEA 파일이 없습니다: {nmea_path}")
+        alert(f"지정한 NMEA 파일이 없습니다:\n{explicit_nmea}")
         raise SystemExit(2)
+    notices = []
+    if nmea_path is None:
+        # 로그가 없다고 앱이 실행되지 않으면 사용자에게는 '아무 반응 없음'으로 보인다.
+        # 지도 팩이 없을 때와 같은 판단으로, 내장 데모 센서로 대체해 실행한다.
+        notices.append(f"NMEA 로그를 찾지 못해 내장 데모 센서로 실행합니다. "
+                       f"{paths.external_root() / 'nmea'} 폴더에 .nmea 파일을 넣으면 재생합니다.")
     # Load persisted state before the GUI event loop; all subsequent disk I/O is asynchronous.
     main_presenter, experiment_presenter = build_services(data_dir, nmea_path=nmea_path)
     tiles, failures = MapPackSet.load(map_pack)
-    # windowed 빌드에서는 print가 죽거나 예외를 내므로 safe_print를 쓴다.
     for path, error in failures:
-        safe_print(f"타일팩을 열지 못했습니다: {path} ({error})")
+        notices.append(f"타일팩을 열지 못했습니다: {path} ({error})")
     if not tiles.available:
-        safe_print(f"지도 타일팩이 없어 배경 없이 실행합니다. 찾은 위치: {map_pack}")
+        notices.append(f"지도 타일팩이 없어 배경 없이 실행합니다. 찾은 위치: {map_pack}")
+    # windowed 빌드에서는 콘솔이 없어 위 안내가 어디에도 보이지 않는다. 실행 파일 옆
+    # 로그 파일에 남겨 '실행했는데 아무 반응이 없다'를 확인할 수 있게 한다.
+    for line in notices:
+        safe_print(line)
+    write_startup_log(notices, data_dir, map_pack, nmea_path)
     import wx
     from experiment_app.ui.adapters.clipboard import WxClipboard
     from experiment_app.ui.frames.main_frame import MainFrame
