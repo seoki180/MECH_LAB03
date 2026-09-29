@@ -20,7 +20,9 @@ def launch(home, *args, env=None):
     environment.update(env or {})
     return subprocess.run([sys.executable, "-m", "experiment_app", *args],
                           capture_output=True, text=True, encoding="utf-8",
-                          timeout=120, cwd=ROOT, env=environment)
+                          # 짧게 잡는다. 이 경로들은 즉시 끝나야 하며, 멈춘다면 그 자체가
+                          # 결함(누를 사람 없는 모달 대화상자 등)이므로 빨리 실패해야 한다.
+                          timeout=60, cwd=ROOT, env=environment)
 
 
 def test_print_paths_uses_external_home(tmp_path):
@@ -77,3 +79,29 @@ def test_empty_data_folders_reach_gui_stage(tmp_path, monkeypatch):
     body = (tmp_path / "MECHLab-시작로그.txt").read_text(encoding="utf-8")
     assert "내장 데모 센서" in body
     assert "지도 타일팩이 없어" in body
+
+
+def test_windows_alert_routes_output_and_dialog(tmp_path, monkeypatch):
+    """실제 safe_print를 거쳐 콘솔 유무에 따른 Windows 대화상자 호출을 검사한다."""
+    import ctypes
+    import io
+    from types import SimpleNamespace
+    from experiment_app import bootstrap
+
+    monkeypatch.setenv("MECHLAB_HOME", str(tmp_path))
+    calls = []
+    user32 = SimpleNamespace(MessageBoxW=lambda *args: calls.append(args))
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
+    # 전역 sys.platform을 바꾸면 pathlib까지 Windows로 바뀌므로 모듈의 sys만 대체한다.
+    console = io.StringIO()
+    runtime = SimpleNamespace(platform="win32", stdout=console)
+    monkeypatch.setattr(bootstrap, "sys", runtime)
+    bootstrap.alert("테스트 오류")
+    assert "테스트 오류" in console.getvalue()
+    assert calls == []
+
+    runtime.stdout = None
+    bootstrap.alert("창으로 표시할 오류")
+    assert len(calls) == 1
+    assert "창으로 표시할 오류" in calls[0][1]
+    assert (tmp_path / "MECHLab-오류.txt").read_text(encoding="utf-8").startswith("창으로 표시할 오류")

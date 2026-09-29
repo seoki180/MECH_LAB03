@@ -52,13 +52,15 @@ def safe_print(body):
     - 콘솔이 있어도 기본 코드 페이지가 cp1252면 한글에서 UnicodeEncodeError가 난다.
 
     진단 출력 실패가 앱을 멈추게 해서는 안 되므로 어떤 경우에도 예외를 올리지 않는다.
+    출력이 실제로 어딘가에 도달했는지 돌려준다. 호출부는 이 값으로 대화상자 같은
+    대체 수단이 필요한지 판단한다.
     """
     stream = sys.stdout
     if stream is None:
-        return
+        return False
     try:
         print(body, file=stream)
-        return
+        return True
     except (UnicodeEncodeError, AttributeError, ValueError, OSError):
         pass
     # 콘솔이 인코딩하지 못하는 글자는 버리고 나머지라도 보여준다.
@@ -71,9 +73,10 @@ def safe_print(body):
         else:
             print(body.encode(encoding, errors="replace").decode(encoding, errors="replace"),
                   file=stream)
+        return True
     except Exception:
         # 출력은 부가 기능이다. 여기서 실패해도 --report 파일과 종료 코드는 유효하다.
-        pass
+        return False
 
 
 def emit(body, report=None):
@@ -95,12 +98,14 @@ def alert(body, title="MECHLab"):
 
     Windows GUI 빌드(console=False)는 stdout/stderr가 없다. 그래서 종료 안내나
     예외 추적이 전부 사라지고, 사용자에게는 '실행했는데 아무 반응이 없음'으로만
-    보인다. 세 곳에 동시에 남긴다.
+    보인다.
 
-    1) 실행 파일 옆 오류 로그 파일 — 항상 남으므로 현장 점검에 쓴다.
-    2) 네이티브 메시지 박스 — wx가 아직 없거나 죽은 상태일 수 있어 Windows에서는
-       ctypes로 user32를 직접 부른다.
-    3) 표준 출력 — 콘솔에서 실행했을 때.
+    1) 실행 파일 옆 오류 로그 파일 — 항상 남기므로 현장 점검에 쓴다.
+    2) 표준 출력 — 콘솔에서 실행했을 때.
+    3) 네이티브 메시지 박스 — 위 출력이 어디에도 도달하지 못했을 때만.
+
+    대화상자는 모달이라 누를 사람이 없으면 프로세스가 영원히 멈춘다. CI와 스크립트
+    실행은 콘솔이 있으므로 2)에서 끝나고 여기까지 오지 않는다.
     """
     from experiment_app import paths
     log = None
@@ -110,18 +115,18 @@ def alert(body, title="MECHLab"):
         log.write_text(body + "\n", encoding="utf-8")
     except OSError:
         log = None
-    safe_print(body)
+    if safe_print(body):
+        return
     shown = body if log is None else f"{body}\n\n자세한 내용: {log}"
     try:
         if sys.platform == "win32":
-            # windowed 빌드에는 콘솔이 없어 이 창이 유일한 안내다. wx가 아직 초기화되지
-            # 않았거나 죽은 뒤일 수 있으므로 wx를 거치지 않고 user32를 직접 부른다.
+            # wx가 아직 초기화되지 않았거나 죽은 뒤일 수 있으므로 wx를 거치지 않고
+            # user32를 직접 부른다.
             import ctypes
             # MB_OK | MB_ICONERROR | MB_SETFOREGROUND
             ctypes.windll.user32.MessageBoxW(None, shown, title, 0x10 | 0x10000)
             return
-        # macOS/Linux 개발 실행에는 콘솔이 있어 위 출력이 보인다. 여기서 wx.App을 새로
-        # 만들면 이벤트 루프 없이 모달이 떠 프로세스가 멈출 수 있으므로, 이미 App이
+        # wx.App을 새로 만들면 이벤트 루프 없이 모달이 떠 멈출 수 있다. 이미 App이
         # 있을 때만(=GUI 시작 후 실패) 창으로 알린다.
         import wx
         if wx.GetApp() is not None:
