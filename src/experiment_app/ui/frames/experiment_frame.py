@@ -67,7 +67,7 @@ class ExperimentFrame(wx.Frame):
 
     def copy_menu(self):
         menu = wx.Menu()
-        for part, label in ((None, "현재 화면 채널 전체"), ("B", "동쪽·북쪽 이동"), ("C", "고도·상승/하강")):
+        for part, label in ((None, "현재 화면 채널 전체"), ("B", "동쪽·북쪽 이동"), ("C", "현재 속도·누적 이동거리")):
             item = menu.Append(wx.ID_ANY, label)
             menu.Bind(wx.EVT_MENU, lambda e, p=part: self.copy(p), item)
         self.PopupMenu(menu)

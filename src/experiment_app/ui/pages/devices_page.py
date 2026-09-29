@@ -18,8 +18,8 @@ class DevicesPage(wx.Panel):
                              ("로봇", text(self, "데모 연결", 14)),
                              ("NMEA 파일", self.file_label),
                              ("A 영역", text(self, "속도, 시작점 거리", 14)),
-                             ("B 영역", text(self, "동쪽 이동, 북쪽 이동", 14)),
-                             ("C 영역", text(self, "고도, 상승/하강", 14)),
+                             ("B 영역", text(self, "횡방향, 종방향", 14)),
+                             ("C 영역", text(self, "현재 속도, 누적 이동거리", 14)),
                              ("기록", text(self, "화면 10 Hz, 최대 30초 재생, 원본 JSONL 저장", 14))):
             facts.Add(text(self, label, 13, colour=MUTED), 0, wx.ALIGN_CENTER_VERTICAL)
             facts.Add(value, 1, wx.EXPAND)

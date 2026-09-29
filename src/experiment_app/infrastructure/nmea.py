@@ -14,8 +14,8 @@ NMEA_CHANNELS = (
     ("A", "A.1", "시작점 직선거리", "m"),
     ("B", "B.0", "동쪽 이동", "m"),
     ("B", "B.1", "북쪽 이동", "m"),
-    ("C", "C.0", "고도 · NMEA", "m"),
-    ("C", "C.1", "상승/하강", "m"),
+    ("C", "C.0", "현재 속도", "km/h"),
+    ("C", "C.1", "누적 이동거리", "m"),
 )
 
 
@@ -61,6 +61,7 @@ class NmeaReplay:
         self.times = ()
         self.start_position = None
         self.duration = None
+        self.travelled = ()
 
     def prepare(self):
         positions = []
@@ -82,20 +83,41 @@ class NmeaReplay:
         self.times = tuple(p.elapsed - positions[0].elapsed for p in positions)
         self.start_position = start
         self.duration = self.times[-1]
+        self.travelled = self._travelled(self.positions)
 
-    def at(self, elapsed):
+    @staticmethod
+    def _travelled(positions):
+        """각 위치까지의 누적 경로 이동거리(m). 시작점 직선거리와 달리 궤적을 따라 더한다.
+
+        fix가 없는 구간은 거리를 알 수 없으므로 더하지 않고 직전 누적값을 유지한다.
+        """
+        totals, total, previous = [], 0.0, None
+        for point in positions:
+            if point.latitude is not None:
+                if previous is not None:
+                    total += displacement(previous.latitude, previous.longitude,
+                                          point.latitude, point.longitude)[2]
+                previous = point
+            totals.append(total)
+        return tuple(totals)
+
+    def _index(self, elapsed):
         if not self.positions:
             raise AppError("NMEA_NOT_READY", "NMEA 재생이 준비되지 않았습니다.")
-        return self.positions[max(0, bisect_right(self.times, elapsed) - 1)]
+        return max(0, bisect_right(self.times, elapsed) - 1)
+
+    def at(self, elapsed):
+        return self.positions[self._index(elapsed)]
 
     def sensor_samples(self, session_id, elapsed, sequence, scenario):
-        point = self.at(elapsed)
+        index = self._index(elapsed)
+        point = self.positions[index]
         start = self.start_position
         values = (None,) * 6
         if point.latitude is not None:
             east, north, distance = displacement(start.latitude, start.longitude, point.latitude, point.longitude)
-            values = (math.hypot(point.north_velocity, point.east_velocity) * 3.6, distance,
-                      east, north, point.altitude, point.altitude - start.altitude)
+            speed = math.hypot(point.north_velocity, point.east_velocity) * 3.6
+            values = (speed, distance, east, north, speed, self.travelled[index])
         timestamp, mono = self.clock.now_utc(), self.clock.monotonic()
         return tuple(SensorSample(session_id, channel, sequence, timestamp, mono, value, unit,
                                   f"NMEA · {point.quality}")

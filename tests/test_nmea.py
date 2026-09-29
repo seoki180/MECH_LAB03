@@ -42,7 +42,9 @@ def test_replay_uses_first_valid_start_and_recorded_velocity(tmp_path):
     east, north, distance = displacement(37.2, 126.7, 37.201, 126.702)
     assert [later[i].value for i in (1, 2, 3)] == pytest.approx([distance, east, north])
     assert later[0].value == pytest.approx(36)
-    assert later[5].value == 0
+    # C 영역: 현재 속도(A와 같은 값)와 궤적을 따라 더한 누적 이동거리.
+    assert later[4].value == pytest.approx(36)
+    assert later[5].value == pytest.approx(distance)
     assert replay.gps_fix("s", 2, "정상").fix_quality == "NMEA · INS_RTKFIXED"
 
 
