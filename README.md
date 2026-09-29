@@ -107,6 +107,24 @@ docker stop tileserver
 인천 남동구와 화성 장안 시험 지점을 모두 덮는 약 31 × 44 km 구역입니다. 3.2만 장 안팎이며
 z18까지 올리면 장 수가 4배가 됩니다.
 
+반경 수십 m 수준까지 확대해서 볼 구역은 z19까지 굽습니다. z19는 위도 37도에서 약 0.23 m/px라
+화면 한 폭(약 640px)이 150 m 안팎입니다.
+
+```sh
+.venv/bin/python tools/rasterize_pack.py \
+    --url 'http://localhost:8090/styles/osm-bright/{z}/{x}/{y}.png' \
+    --bbox 126.752,37.216,126.796,37.260 --min-zoom 13 --max-zoom 19 \
+    --name "화성 자동차안전연구원" --out asset/maps/hwaseong-katri-z19.mbtiles
+
+.venv/bin/python tools/rasterize_pack.py \
+    --url 'http://localhost:8090/styles/osm-bright/{z}/{x}/{y}.png' \
+    --bbox 126.636,37.436,126.671,37.463 --min-zoom 13 --max-zoom 19 \
+    --name "인하대학교 인근" --out asset/maps/inha-univ-z19.mbtiles
+```
+
+각각 약 3.9 × 4.9 km(7,360장 32MB), 약 3.1 × 3.0 km(3,611장 40MB)입니다.
+화면 줌 상한 `ui/adapters/tile_map.py`의 `MAX_ZOOM`은 이 팩에 맞춰 19로 두었습니다.
+
 ```sh
 .venv/bin/python tools/rasterize_pack.py \
     --url 'http://localhost:8090/styles/osm-bright/{z}/{x}/{y}.png' \

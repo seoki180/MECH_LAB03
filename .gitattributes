@@ -1,0 +1,5 @@
+# NMEA 로그는 줄 끝 CRLF가 프로토콜의 일부다. Git이 LF로 바꾸면 파싱이 달라진다.
+*.nmea -text
+
+# 타일팩은 바이너리다.
+*.mbtiles binary

@@ -10,7 +10,7 @@ from experiment_app.ui.adapters.mercator import TILE_SIZE, lonlat_to_pixel, pixe
 
 # 실제로 타일이 있는 구간. 이 밖으로 나가면 격자만 뜨거나 흐릿하게 늘어난 그림이 된다.
 # 팩들의 줌 범위를 합친 값은 구역마다 타일 유무가 달라 경계로 쓸 수 없다.
-MIN_ZOOM, MAX_ZOOM = 13, 17
+MIN_ZOOM, MAX_ZOOM = 13, 19
 BITMAP_CACHE_LIMIT = 256
 # 휠 한 노치가 움직이는 줌 단계. 트랙패드는 잘게 여러 번 보내므로 1보다 작게 둔다.
 WHEEL_STEP = 0.5

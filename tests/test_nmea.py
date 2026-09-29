@@ -44,7 +44,9 @@ def test_replay_uses_first_valid_start_and_recorded_velocity(tmp_path):
 
 
 def test_supplied_file_drives_session(tmp_path):
-    path = next(Path(__file__).resolve().parents[1].glob("asset/**/10km_log.nmea"))
+    # 저장소에 포함된 픽스처를 쓴다. 원본 로그(asset/ 아래 2.1MB)는 참고 자료라
+    # 저장소에 올리지 않으므로, glob으로 찾으면 CI에서 StopIteration으로 실패한다.
+    path = Path(__file__).resolve().parent / "data" / "10km_log_head.nmea"
     main, experiment = build_services(tmp_path, duration=0.12, nmea_path=path)
     try:
         definition = main.service.repository.list()[0]
