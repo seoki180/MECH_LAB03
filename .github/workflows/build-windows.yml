@@ -71,13 +71,21 @@ jobs:
         # --print-paths와 --self-check는 GUI를 띄우지 않는다.
         shell: pwsh
         run: |
-          $exe = "dist\MECHLab.exe"
+          # 콘솔 출력 코드 페이지가 cp1252면 아래 Write-Host의 한글이 ?로 깨진다.
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $exe = Join-Path (Get-Location) "dist\MECHLab.exe"
           if (-not (Test-Path $exe)) { throw "빌드 산출물이 없습니다: $exe" }
-          & $exe --print-paths --report "paths.txt" | Out-Null
-          if (-not (Test-Path "paths.txt")) { throw "--print-paths가 결과 파일을 쓰지 못했습니다" }
-          # 보고 파일은 UTF-8이다. PowerShell 5.1 기본 인코딩으로 읽으면 한글이 깨져
-          # 아래 문자열 판정이 어긋날 수 있으므로 명시한다.
-          $out = Get-Content "paths.txt" -Raw -Encoding utf8
+          # windowed 빌드(console=False)는 `&`로 실행하면 PowerShell이 종료를
+          # 기다리지 않고 $LASTEXITCODE도 설정되지 않는다. Start-Process -Wait를 쓴다.
+          # 경로는 절대 경로로 준다. Start-Process는 .NET 작업 디렉터리를 기준으로
+          # 상대 경로를 풀기 때문에 PowerShell의 현재 위치와 어긋날 수 있다.
+          $report = Join-Path (Get-Location) "paths.txt"
+          $p = Start-Process -FilePath $exe -ArgumentList '--print-paths','--report',"`"$report`"" `
+                 -WorkingDirectory (Get-Location) -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "--print-paths 실패 (종료 코드 $($p.ExitCode))" }
+          if (-not (Test-Path $report)) { throw "--print-paths가 결과 파일을 쓰지 못했습니다" }
+          # 보고 파일은 UTF-8이다. 기본 인코딩으로 읽으면 한글이 깨져 판정이 어긋난다.
+          $out = Get-Content $report -Raw -Encoding utf8
           Write-Host $out
           if ($out -notmatch "frozen: True") { throw "frozen 실행으로 인식되지 않았습니다" }
           # 지도 폴더는 .exe와 같은 폴더를 가리켜야 한다. 번들 안(_MEI 임시 폴더)이면 실패다.
@@ -90,10 +98,14 @@ jobs:
         # GUI 빌드는 콘솔에 출력하지 못하므로 --report 파일로 결과를 받는다.
         shell: pwsh
         run: |
-          & "dist\MECHLab.exe" --self-check --report "check.txt"
-          $code = $LASTEXITCODE
-          if (Test-Path "check.txt") { Get-Content "check.txt" -Encoding utf8 | Write-Host }
-          if ($code -ne 0) { throw "번들 자체 점검 실패 (종료 코드 $code)" }
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $exe = Join-Path (Get-Location) "dist\MECHLab.exe"
+          $report = Join-Path (Get-Location) "check.txt"
+          $p = Start-Process -FilePath $exe -ArgumentList '--self-check','--report',"`"$report`"" `
+                 -WorkingDirectory (Get-Location) -Wait -PassThru -NoNewWindow
+          if (Test-Path $report) { Get-Content $report -Encoding utf8 | Write-Host }
+          else { throw "--self-check가 결과 파일을 쓰지 못했습니다" }
+          if ($p.ExitCode -ne 0) { throw "번들 자체 점검 실패 (종료 코드 $($p.ExitCode))" }
 
       - name: 배포 폴더 구성
         # 사용자가 받는 zip 구조를 여기서 만든다. 지도와 NMEA는 빈 폴더와 안내만 넣는다.
