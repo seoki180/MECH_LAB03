@@ -5,8 +5,8 @@ Colour is reserved for state and primary commands; everything else is ink on she
 import ctypes
 import ctypes.util
 import sys
-from pathlib import Path
 import wx
+from experiment_app.paths import asset_dir
 
 GRAPHITE = "#262B30"
 GRAPHITE_RAISED = "#353B41"
@@ -85,7 +85,7 @@ BUTTON_COLOURS = {
     },
 }
 
-FONT_DIR = Path(__file__).resolve().parents[3] / "asset" / "fonts"
+FONT_DIR = asset_dir("fonts")
 FONT_FAMILY = "Pretendard"
 WEIGHTS = {"regular": wx.FONTWEIGHT_NORMAL, "semibold": wx.FONTWEIGHT_SEMIBOLD, "bold": wx.FONTWEIGHT_BOLD}
 _face = None
@@ -123,7 +123,8 @@ def _register_mac(path):
 def load_fonts():
     """Register the bundled Pretendard files; fall back to the system face if unavailable."""
     global _face
-    for path in sorted(FONT_DIR.glob(f"{FONT_FAMILY}-*.otf")):
+    # Resolved here rather than at import so a frozen run sees the unpacked bundle dir.
+    for path in sorted(asset_dir("fonts").glob(f"{FONT_FAMILY}-*.otf")):
         try:
             if sys.platform == "darwin":
                 _register_mac(path)

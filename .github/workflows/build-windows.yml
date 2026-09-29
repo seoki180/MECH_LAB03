@@ -1,0 +1,121 @@
+name: Windows .exe 빌드
+
+# 태그를 붙이면 릴리스에 올리고, 그 외에는 아티팩트로만 남긴다.
+# 수동 실행(workflow_dispatch)으로 아무 브랜치나 빌드해 볼 수 있다.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # 로직 검증은 리눅스에서 먼저 돌려 빌드 자원을 아낀다. wx가 필요 없는 테스트만 여기서 돈다.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: 의존성 설치
+        # wxPython 리눅스 휠은 배포판별 빌드가 필요해 여기서는 설치하지 않는다.
+        # 아래 테스트는 wx를 import하지 않는 domain/application/adapter 계층만 다룬다.
+        run: uv pip install --system pytest
+      - name: 비 GUI 테스트
+        env:
+          PYTHONPATH: src
+        run: python -m pytest tests/test_core.py tests/test_nmea.py tests/test_robot.py -q
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # wxPython 4.3.1과 PyInstaller 모두 3.14 Windows 휠을 제공한다.
+          python-version: "3.14"
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install wxPython==4.3.1 pyinstaller==6.22.3 pytest
+
+      - name: 전체 테스트
+        # Windows 러너에는 wx가 설치돼 있어 UI 계층까지 import된다.
+        env:
+          PYTHONPATH: src
+        run: python -m pytest -q
+
+      - name: .exe 빌드
+        run: pyinstaller packaging/mechlab.spec --noconfirm
+
+      - name: 경로 해석 확인
+        # 번들된 .exe가 asset을 찾고, 지도 폴더를 .exe 옆에서 읽는지 확인한다.
+        # --print-paths와 --self-check는 GUI를 띄우지 않는다.
+        shell: pwsh
+        run: |
+          $exe = "dist\MECHLab.exe"
+          if (-not (Test-Path $exe)) { throw "빌드 산출물이 없습니다: $exe" }
+          & $exe --print-paths --report "paths.txt" | Out-Null
+          if (-not (Test-Path "paths.txt")) { throw "--print-paths가 결과 파일을 쓰지 못했습니다" }
+          $out = Get-Content "paths.txt" -Raw
+          Write-Host $out
+          if ($out -notmatch "frozen: True") { throw "frozen 실행으로 인식되지 않았습니다" }
+          # 지도 폴더는 .exe와 같은 폴더를 가리켜야 한다. 번들 안(_MEI 임시 폴더)이면 실패다.
+          if ($out -match "map_pack_dir: .*_MEI") { throw "지도 폴더가 번들 내부를 가리킵니다" }
+          $distFull = (Resolve-Path "dist").Path
+          if ($out -notmatch [regex]::Escape($distFull)) { throw "외부 자료 폴더가 .exe 옆이 아닙니다" }
+
+      - name: 번들 자체 점검
+        # 글꼴·아이콘이 번들에 들어갔는지, 지도 폴더가 교체 가능한 바깥에 있는지 확인한다.
+        # GUI 빌드는 콘솔에 출력하지 못하므로 --report 파일로 결과를 받는다.
+        shell: pwsh
+        run: |
+          & "dist\MECHLab.exe" --self-check --report "check.txt"
+          $code = $LASTEXITCODE
+          if (Test-Path "check.txt") { Get-Content "check.txt" | Write-Host }
+          if ($code -ne 0) { throw "번들 자체 점검 실패 (종료 코드 $code)" }
+
+      - name: 배포 폴더 구성
+        # 사용자가 받는 zip 구조를 여기서 만든다. 지도와 NMEA는 빈 폴더와 안내만 넣는다.
+        shell: pwsh
+        run: |
+          $stage = "release\MECHLab"
+          New-Item -ItemType Directory -Force -Path "$stage\maps", "$stage\nmea" | Out-Null
+          Copy-Item "dist\MECHLab.exe" $stage
+          Copy-Item "packaging\배포_읽어보기.txt" "$stage\읽어보기.txt"
+          # 빈 폴더는 zip에서 사라지므로 안내 파일을 하나씩 둔다.
+          Set-Content "$stage\maps\여기에_지도팩을_넣으세요.txt" `
+            "이 폴더에 .mbtiles 타일팩을 넣으면 앱이 지도 배경을 표시합니다. 파일이 없으면 좌표와 궤적만 표시합니다." -Encoding utf8
+          Set-Content "$stage\nmea\여기에_NMEA_로그를_넣으세요.txt" `
+            "재생할 .nmea 로그를 이 폴더에 넣으세요. 10km_log.nmea가 있으면 그 파일을 먼저 사용합니다." -Encoding utf8
+          Compress-Archive -Path $stage -DestinationPath "release\MECHLab-windows.zip"
+
+      - name: 아티팩트 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: MECHLab-windows
+          path: release/MECHLab-windows.zip
+          retention-days: 30
+
+  release:
+    # 태그 푸시에서만 릴리스를 만든다.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MECHLab-windows
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: MECHLab-windows.zip

@@ -416,6 +416,23 @@ UI 착수는 위 기본값으로 진행할 수 있다. 다음 항목은 해당 �
 
 공식 문서가 정하는 것은 API 동작이다. 화면 배치, 수치 토큰, 갱신률, 상태 정책 및 모듈 구성은 본 프로젝트의 제안 설계다. Python/wxPython 버전은 타깃 OS에서 설치·WebView·DPI smoke test 후 고정한다.
 
+## 13. 파일 경로와 배포
+
+경로 해석은 `experiment_app/paths.py` 한 곳에서 한다. 다른 모듈은 `sys.frozen`이나 `__file__`을 직접 다루지 않는다. 개발 실행과 PyInstaller 번들 실행의 규칙이 다르기 때문이다.
+
+자료를 두 종류로 나눈다.
+
+- **번들 자원**: 글꼴(`asset/fonts`)과 아이콘(`asset/icons`). 읽기 전용이고 작아서 실행 파일 안에 넣는다. `paths.asset_dir(name)`으로 찾으며, 번들 실행 시 PyInstaller가 푼 임시 폴더(`paths.bundle_root()`)를 가리킨다.
+- **외부 자료**: 지도 타일팩, NMEA 로그, 저장 데이터. `paths.external_root()` 기준이며 번들 실행 시 실행 파일이 있는 폴더다. 지도 타일팩은 전국 팩이 1 GB를 넘어 실행 파일에 넣을 수 없고, 구역을 추가할 때 앱을 다시 빌드하지 않아야 하므로 반드시 바깥에 둔다.
+
+기본 위치는 실행 파일과 같은 폴더의 `maps/`, `nmea/`, `.mechlab/`이다. 우선순위는 명령줄 인자 > 환경 변수 > 기본 폴더다. 환경 변수는 `MECHLAB_MAP_PACK`, `MECHLAB_NMEA`, `MECHLAB_DATA_DIR`이며 `MECHLAB_HOME`으로 기준 폴더를 한 번에 옮길 수 있다.
+
+지도 타일팩이 없어도 앱은 실행된다. 배경 없이 좌표와 궤적만 표시하며 이는 오류가 아니다. 반면 NMEA 로그가 없으면 재생할 데이터가 없으므로 안내 문구와 함께 종료한다.
+
+`--print-paths`는 해석된 경로를, `--self-check`는 번들 자원과 외부 자료 폴더 점검 결과를 출력한다. Windows GUI 빌드는 콘솔이 없어 표준 출력이 보이지 않으므로 `--report <파일>`로 결과를 파일에 받는다.
+
+빌드는 `packaging/mechlab.spec`으로 하며 GitHub Actions의 `.github/workflows/build-windows.yml`이 Windows 러너에서 단일 `.exe`를 만든다. 진입점은 `packaging/entry.py`다. `src/experiment_app/__main__.py`는 상대 import를 써서 PyInstaller 진입점으로 쓸 수 없다.
+
 ### 2026-09-28 · Test 설정과 편집 모드
 
 한 Test에 기존 실험 입력 데이터와 AR Trapezoidal Step, PF Straight Line 로봇 설정을 함께 저장한다.

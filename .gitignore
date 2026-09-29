@@ -22,3 +22,7 @@ asset/maps/*.mbtiles
 # 참고용 원본 자료는 저장소 밖에서 공유한다. 합계 20MB 가까이 된다.
 asset/UI작업 관련자료/
 asset/*.hwp
+
+# SQLite 임시 파일. 타일팩을 읽는 중에 생겼다 사라진다.
+*.mbtiles-journal
+*.mbtiles-wal

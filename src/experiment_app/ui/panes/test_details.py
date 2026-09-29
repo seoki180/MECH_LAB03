@@ -1,6 +1,6 @@
 import wx
 from wx.lib.scrolledpanel import ScrolledPanel
-from experiment_app.ui.theme import text, button, add, surface, section_bar, chip, set_chip, MUTED
+from experiment_app.ui.theme import text, button, surface, section_bar, chip, set_chip, MUTED
 from .parameter_editor import ParameterEditorPane
 from .specification import SpecificationPane
 
