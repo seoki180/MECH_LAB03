@@ -12,8 +12,8 @@ from experiment_app.domain.test_definition import AppError
 NMEA_CHANNELS = (
     ("A", "A.0", "속도 · NMEA", "km/h"),
     ("A", "A.1", "시작점 직선거리", "m"),
-    ("B", "B.0", "동쪽 이동", "m"),
-    ("B", "B.1", "북쪽 이동", "m"),
+    ("B", "B.0", "횡방향", "m"),
+    ("B", "B.1", "종방향", "m"),
     ("C", "C.0", "현재 속도", "km/h"),
     ("C", "C.1", "누적 이동거리", "m"),
 )

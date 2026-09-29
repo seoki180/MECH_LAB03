@@ -21,6 +21,9 @@ class GpsMapPane(wx.Panel):
             self.zoom_buttons.append(control)
         self.recenter_button = button(self, "현재 위치", self.recenter)
         add(actions, self.recenter_button, border=3, flags=wx.ALL | wx.ALIGN_CENTER_VERTICAL)
+        # 버튼 옆 현재 위도·경도. 아래 readout보다 먼저 눈에 들어와야 해서 헤더 줄에 둔다.
+        self.coordinates = text(self, "위도 —, 경도 —", 13, weight="semibold")
+        add(actions, self.coordinates, border=6, flags=wx.ALL | wx.ALIGN_CENTER_VERTICAL)
         root.Add(actions, 0, wx.EXPAND | wx.ALL, self.FromDIP(10))
         frame = wx.Panel(self)
         stroke(frame)
@@ -52,9 +55,21 @@ class GpsMapPane(wx.Panel):
             self.map.center = self.map.track[-1]
             self.map.Refresh(False)
 
+    @staticmethod
+    def coordinate_text(snapshot):
+        """헤더 줄에 표시할 현재 위도·경도. 값이 없으면 0으로 채우지 않고 —로 둔다."""
+        gps = snapshot.gps
+        if gps and gps.latitude is not None:
+            return f"위도 {gps.latitude:.6f}, 경도 {gps.longitude:.6f}"
+        if snapshot.track:
+            lat, lon = snapshot.track[-1]
+            return f"위도 {lat:.6f}, 경도 {lon:.6f} (마지막 유효)"
+        return "위도 —, 경도 —"
+
     def render(self, snapshot, map_failed=False, live=True):
         gps = snapshot.gps
         self.map.render(snapshot.track, self.follow, map_failed, valid=bool(live and gps and gps.latitude is not None))
+        self.coordinates.SetLabel(self.coordinate_text(snapshot))
         if gps:
             if gps.latitude is not None:
                 label = f"{gps.latitude:.6f}, {gps.longitude:.6f}   {gps.fix_quality}" + ("   종료 시 위치" if not live else "")
