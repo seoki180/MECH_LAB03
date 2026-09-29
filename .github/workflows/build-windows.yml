@@ -19,13 +19,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
         with:
-          enable-cache: true
+          # Windows 잡과 같은 버전으로 맞춘다. setup-python이 설치한 Python은
+          # 배포판 관리 대상이 아니라 pip 설치가 막히지 않는다.
+          python-version: "3.14"
       - name: 의존성 설치
         # wxPython 리눅스 휠은 배포판별 빌드가 필요해 여기서는 설치하지 않는다.
         # 아래 테스트는 wx를 import하지 않는 domain/application/adapter 계층만 다룬다.
-        run: uv pip install --system pytest
+        #
+        # uv pip install --system은 쓰지 않는다. 러너의 시스템 Python은 PEP 668로
+        # 보호돼 있어 externally-managed-environment 오류로 실패한다.
+        run: python -m pip install --upgrade pip pytest
       - name: 비 GUI 테스트
         env:
           PYTHONPATH: src
