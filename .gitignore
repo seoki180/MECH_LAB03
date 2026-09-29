@@ -1,0 +1,24 @@
+.venv/
+.cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.mechlab/
+artifacts/
+
+# IDE 설정과 도구 로그는 개발자 환경에 속한다.
+.idea/
+.playwright-mcp/
+
+# tileserver-gl 렌더링용 빌드 입력. 101MB라 받아서 쓴다.
+tools/tileserver/fonts/
+
+# 타일팩은 tools/ 스크립트로 굽는 산출물이다. 전국 팩은 1 GB다.
+asset/maps/*.mbtiles
+
+# 참고용 원본 자료는 저장소 밖에서 공유한다. 합계 20MB 가까이 된다.
+asset/UI작업 관련자료/
+asset/*.hwp

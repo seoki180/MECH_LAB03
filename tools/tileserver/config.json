@@ -1,0 +1,20 @@
+{
+  "options": {
+    "paths": {
+      "root": "/data",
+      "styles": "styles",
+      "mbtiles": "mbtiles",
+      "fonts": "fonts"
+    }
+  },
+  "styles": {
+    "osm-bright": {
+      "style": "osm-bright/style.json"
+    }
+  },
+  "data": {
+    "openmaptiles": {
+      "mbtiles": "south-korea.mbtiles"
+    }
+  }
+}

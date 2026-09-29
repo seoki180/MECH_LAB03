@@ -1,0 +1,24 @@
+[project]
+name = "mechlab-03"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = ["wxPython==4.3.1"]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+mechlab = "experiment_app.bootstrap:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+# tools/build_map_pack.py 전용. 앱 런타임은 wxPython만 사용한다.
+maptools = ["rio-tiler>=7", "morecantile>=5"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
