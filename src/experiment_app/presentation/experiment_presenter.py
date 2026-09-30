@@ -1,12 +1,23 @@
 from experiment_app.domain.session import ACTIVE
+from experiment_app.domain.test_definition import AppError
 from .view_models import metric_model
 
 
 class ExperimentPresenter:
-    def __init__(self, sessions, telemetry, copier, clock, nmea_sources=None, nmea_path=None):
+    def __init__(self, sessions, telemetry, copier, clock, nmea_sources=None, nmea_path=None,
+                 analysis=None):
         self.sessions, self.telemetry, self.copier, self.clock = sessions, telemetry, copier, clock
         self.nmea_sources, self.nmea_path = nmea_sources, nmea_path
+        self.analysis = analysis
         self.visible = {"B": ("B.0", "B.1"), "C": ("C.0", "C.1")}
+
+    def analyse(self, session_id):
+        """결과 그래프 값을 만든다. 기록을 읽으므로 GUI 스레드에서 오래 걸릴 수 있어
+        호출자가 busy 표시를 해야 한다. 그래프 대상은 C 영역 첫 채널(현재 속도)이다.
+        """
+        if self.analysis is None:
+            raise AppError("VALIDATION_FAILED", "결과 분석 서비스가 없습니다.")
+        return self.analysis.analyse_session(session_id)
 
     def select_nmea(self, path):
         channels, sensors, gps = self.nmea_sources(path)

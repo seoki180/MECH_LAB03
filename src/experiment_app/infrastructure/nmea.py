@@ -9,6 +9,10 @@ from experiment_app.domain.telemetry import GpsFix, SensorSample, displacement
 from experiment_app.domain.test_definition import AppError
 
 
+# 데모 판정값: 제공된 정차 기록의 INS 속도 노이즈(<0.15 m/s)가 좌표 흔들림을
+# 누적 이동으로 만들지 않도록 한다. 실제 장비의 정지 판정 기준은 별도 확인이 필요하다.
+MIN_MOVING_SPEED_MPS = 0.3
+
 NMEA_CHANNELS = (
     ("A", "A.0", "속도 · NMEA", "km/h"),
     ("A", "A.1", "시작점 직선거리", "m"),
@@ -87,17 +91,22 @@ class NmeaReplay:
 
     @staticmethod
     def _travelled(positions):
-        """각 위치까지의 누적 경로 이동거리(m). 시작점 직선거리와 달리 궤적을 따라 더한다.
+        """각 위치까지의 누적 경로 이동거리(m).
 
-        fix가 없는 구간은 거리를 알 수 없으므로 더하지 않고 직전 누적값을 유지한다.
+        정지 중 좌표가 흔들릴 때는 INS 수평 속도가 판정값 미만이므로
+        거리에 더하지 않는다. 누적값은 줄어들지 않는다.
         """
         totals, total, previous = [], 0.0, None
         for point in positions:
             if point.latitude is not None:
-                if previous is not None:
+                if previous is not None and math.hypot(
+                        point.north_velocity, point.east_velocity) >= MIN_MOVING_SPEED_MPS:
                     total += displacement(previous.latitude, previous.longitude,
                                           point.latitude, point.longitude)[2]
                 previous = point
+            else:
+                # 두 유효 fix 사이에 빈 구간이 있으면 그 사이 경로는 알 수 없다.
+                previous = None
             totals.append(total)
         return tuple(totals)
 
@@ -132,12 +141,21 @@ class NmeaReplay:
 
 
 class NmeaSensorSource:
+    """파일을 재생하는 소스. 끝이 있으므로 continuous=False."""
+
+    continuous = False
+
     def __init__(self, replay):
         self.replay = replay
+        self.duration = None
 
     def prepare(self):
         self.replay.prepare()
         self.duration = self.replay.duration
+
+    def exhausted(self, elapsed):
+        """재생할 자료를 다 내보냈는지. 파일 마지막 시각을 지나면 끝이다."""
+        return self.duration is not None and elapsed >= self.duration
 
     def read(self, session_id, elapsed, sequence, scenario):
         return self.replay.sensor_samples(session_id, elapsed, sequence, scenario)

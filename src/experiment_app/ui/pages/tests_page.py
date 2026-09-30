@@ -5,7 +5,8 @@ from experiment_app.ui.panes.test_details import TestDetailsPane
 
 
 class TestsPage(wx.Panel):
-    def __init__(self, parent, fields, on_select, on_reorder, on_patch, on_structure):
+    def __init__(self, parent, fields, on_select, on_reorder, on_patch, on_structure,
+                 file_commands=None):
         super().__init__(parent)
         self.SetBackgroundColour(CONCRETE)
         self.narrow, self.show_list = False, False
@@ -16,7 +17,8 @@ class TestsPage(wx.Panel):
         self.tree_card, self.tree = card(self, lambda parent: TestTreePane(parent, on_select, on_reorder))
         self.tree_card.SetMinSize(self.FromDIP((scaled(280), -1)))
         self.details_card, self.details = card(
-            self, lambda parent: TestDetailsPane(parent, fields, on_patch, on_structure))
+            self, lambda parent: TestDetailsPane(parent, fields, on_patch, on_structure,
+                                                 file_commands))
         self.body.Add(self.tree_card, 3, wx.EXPAND | wx.RIGHT, self.FromDIP(12))
         self.body.Add(self.details_card, 7, wx.EXPAND)
         root.Add(self.body, 1, wx.EXPAND | wx.ALL, self.FromDIP(12))

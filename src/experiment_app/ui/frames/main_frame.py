@@ -36,7 +36,10 @@ class MainFrame(wx.Frame):
             ("settings", "설정", self.open_settings, False),
         ), compact=True, status_chips=False)
         root.Add(self.header, 0, wx.EXPAND)
-        self.tests = TestsPage(self, fields, self.select, self.reorder, self.patch, self.structure)
+        self.tests = TestsPage(self, fields, self.select, self.reorder, self.patch, self.structure,
+                               {"import": self.import_test, "export": self.export_test,
+                                "scenario_import": self.import_scenario,
+                                "scenario_clear": self.clear_scenario})
         root.Add(self.tests, 1, wx.EXPAND)
         self.SetSizer(root)
         self.CreateStatusBar()
@@ -65,8 +68,110 @@ class MainFrame(wx.Frame):
         policy = (p.service.policy_provider(definition) if p.editing else
                   EditPolicy("readonly", frozenset(), "수정 버튼을 눌러 편집하세요.")) if definition else None
         group_label = self.repository.groups().get(self.selected_group) if not definition else None
-        self.tests.details.render(definition, p.changes, policy, p.errors, group_label)
+        self.tests.details.render(definition, p.changes, policy, p.errors, group_label,
+                                  p.scenario, not p.busy, not p.busy)
         self.tick()
+
+    # ------------------------------------------------ 시험 파일과 시험시나리오
+
+    def import_scenario(self):
+        """CSV를 골라 현재 시험의 시험시나리오로 삼는다."""
+        definition = self.presenter.definition
+        if definition is None or self.presenter.busy:
+            return
+        if definition.revision == 0:
+            self.error(AppError("VALIDATION_FAILED", "시험을 먼저 저장한 뒤 시나리오를 가져오세요."))
+            return
+        dialog = wx.FileDialog(self, "시험시나리오 CSV 선택", wildcard="시나리오 CSV (*.csv)|*.csv",
+                               style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+        result = dialog.ShowModal()
+        path = dialog.GetPath()
+        dialog.Destroy()
+        if result != wx.ID_OK:
+            return
+        def done(points, error):
+            if error:
+                self.error(error)
+                return
+            self.presenter.refresh_scenario()
+            self.render()
+            self.SetStatusText(f"시험시나리오 {len(points)}행을 가져왔습니다.")
+        self.presenter.import_scenario(path, done)
+        self.tick()
+
+    def clear_scenario(self):
+        definition = self.presenter.definition
+        if definition is None or self.presenter.busy or definition.revision == 0:
+            return
+        dialog = wx.MessageDialog(self, "이 시험의 시험시나리오 CSV를 지웁니다.\n시나리오 없이도 시험을 시작할 수 있습니다.",
+                                  "시나리오 비우기", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
+        result = dialog.ShowModal()
+        dialog.Destroy()
+        if result != wx.ID_YES:
+            return
+        def done(_, error):
+            if error:
+                self.error(error)
+                return
+            self.presenter.refresh_scenario()
+            self.render()
+            self.SetStatusText("시험시나리오를 비웠습니다.")
+        self.presenter.clear_scenario(done)
+        self.tick()
+
+    def export_test(self):
+        """현재 시험 폴더를 통째로 고른 위치에 복사한다."""
+        definition = self.presenter.definition
+        if definition is None or self.presenter.busy:
+            return
+        if definition.revision == 0:
+            self.error(AppError("VALIDATION_FAILED", "시험을 먼저 저장한 뒤 내보내세요."))
+            return
+        dialog = wx.DirDialog(self, "시험 폴더를 복사할 위치 선택", style=wx.DD_DEFAULT_STYLE)
+        result = dialog.ShowModal()
+        path = dialog.GetPath()
+        dialog.Destroy()
+        if result != wx.ID_OK:
+            return
+        def done(written, error):
+            if error:
+                self.error(error)
+                return
+            self.SetStatusText(f"내보냈습니다: {written.name} 폴더")
+            self.tick()
+        self.presenter.export(path, done)
+        self.tick()
+
+    def import_test(self):
+        """외부 시험 폴더를 선택한 시험목록으로 통째로 들여온다."""
+        if self.presenter.busy:
+            return
+        # 버튼이 시험 이름 옆에 있으므로 보고 있는 시험의 시험목록을 기본 대상으로 삼는다.
+        current = self.presenter.definition
+        group = (current.group_id if current else self.selected_group) \
+            or next(iter(self.repository.groups()), None)
+        if group is None:
+            self.error(AppError("VALIDATION_FAILED", "먼저 시험목록을 추가하세요."))
+            return
+        def action():
+            dialog = wx.DirDialog(self, f"'{self.repository.groups().get(group, group)}'(으)로 가져올 시험 폴더",
+                                  style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST)
+            result = dialog.ShowModal()
+            path = dialog.GetPath()
+            dialog.Destroy()
+            if result != wx.ID_OK:
+                return
+            def done(definition, error):
+                if error:
+                    self.error(error)
+                    return
+                self.presenter.select(definition.id)
+                self.selected_group = definition.group_id
+                self.render()
+                self.SetStatusText(f"가져왔습니다: {definition.name}")
+            self.presenter.import_test(path, group, done)
+            self.tick()
+        self.guard_dirty(action)
 
     def open_settings(self):
         if self.settings_dialog is not None or self.closing:
@@ -268,8 +373,8 @@ class MainFrame(wx.Frame):
         except AppError as error:
             self.error(error)
             return
-        self.experiment = ExperimentFrame(self, self.experiment_presenter, self.clipboard, self.tiles,
-                                          self.show_results, self.experiment_closed)
+        self.experiment = ExperimentFrame(self, self.experiment_presenter, self.tiles,
+                                          self.experiment_closed)
         self.experiment.Show()
 
     def experiment_closed(self):
@@ -326,13 +431,22 @@ class MainFrame(wx.Frame):
         self.header.buttons["cancel"].Enable(p.editing and not p.busy)
         for key in ("duplicate", "open"):
             self.header.buttons[key].Enable(p.definition is not None and not p.busy)
+        # 시나리오 파일이 깨진 경우에만 시작을 막는다. 시나리오가 없는 것은 선택이므로
+        # 목표값 없이 실행할 수 있다. 버튼을 누른 뒤 실패하는 대신 미리 막는다.
+        runnable = p.scenario is not None and p.scenario.runnable
+        self.header.buttons["open"].Enable(p.definition is not None and not p.busy and runnable)
         self.header.buttons["delete"].Enable(bool(p.definition or self.selected_group) and not p.busy)
         self.header.buttons["add"].Enable(not p.busy)
         self.tests.Enable(not p.busy)
         self.header.Layout()
         self.Layout()
         self.SetStatusText("저장 중…" if p.busy else ("입력 오류가 있습니다. 빨간 안내가 붙은 항목을 고치세요." if p.errors else
-                           ("수정했지만 아직 저장하지 않았습니다." if p.dirty else "저장된 설정입니다. 데모 모드로 실행 중입니다.")))
+                           ("수정했지만 아직 저장하지 않았습니다." if p.dirty else
+                            ("시험시나리오 CSV를 읽을 수 없습니다. 파일을 고치거나 비운 뒤 시작하세요."
+                             if p.definition is not None and not runnable else
+                             ("목표값 없이 실행합니다. 저장된 설정입니다. 데모 모드로 실행 중입니다."
+                              if p.scenario is not None and p.scenario.state == "none" else
+                              "저장된 설정입니다. 데모 모드로 실행 중입니다.")))))
         if self.closing and not self.experiment and self.sessions.is_idle() and not p.busy:
             self.dispose()
             self.Destroy()

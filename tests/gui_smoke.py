@@ -2,6 +2,7 @@
 import io
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import sys
 import time
@@ -55,7 +56,11 @@ def build_demo_pack(directory, min_zoom=10, max_zoom=16):
     return directory
 
 
-main, experiment = build_services(OUTPUT / "smoke-data", duration=10)
+# 이전 실행이 남긴 시험 폴더와 기록을 지우고 데모 자료로 다시 채운다.
+shutil.rmtree(OUTPUT / "smoke-data", ignore_errors=True)
+shutil.rmtree(OUTPUT / "smoke-export", ignore_errors=True)
+# 상한 없이 실제 운용과 같게 띄운다. 수집은 스모크가 중지 버튼을 누를 때 끝난다.
+main, experiment = build_services(OUTPUT / "smoke-data")
 tiles, pack_failures = MapPackSet.load(build_demo_pack(OUTPUT / "smoke-maps"))
 frame = MainFrame(main, experiment, WxClipboard(), tiles, (BASIC_FIELDS, STEP_FIELDS), SCENARIOS)
 frame.Show()
@@ -282,12 +287,82 @@ def narrow():
     frame.tests.toggle_list()
     check(frame.tests.tree_card.IsShown(), "List remains reachable at 1024 DIP")
     frame.tests.selection_done()
+    check_scenario()
     frame._prepare()
     later(prepared)
 
 
+def check_scenario():
+    """시험시나리오 pane과 내보내기/가져오기가 파일을 실제로 다루는지."""
+    pane = frame.tests.details.scenario
+    files = frame.tests.details.file_buttons
+    check(pane.IsShown(), "Scenario pane is visible with the selected test")
+    # 시험 파일 명령은 시험 이름 옆에, 시나리오 CSV 명령은 시나리오 구역에 있다.
+    check(files["import"].GetParent() is frame.tests.details
+          and files["export"].GetParent() is frame.tests.details,
+          "Test import/export sit next to the test name, not in the header")
+    check("import" not in frame.header.buttons and "export" not in frame.header.buttons,
+          "Header no longer carries the test file commands")
+    name_rect = frame.tests.details.heading.GetScreenRect()
+    import_rect = files["import"].GetScreenRect()
+    export_rect = files["export"].GetScreenRect()
+    check(import_rect.x >= name_rect.GetRight(), "Import button is to the right of the test name")
+    check(export_rect.x >= import_rect.GetRight(), "Export button sits beside the import button")
+    check(abs(import_rect.y - export_rect.y) <= 2, "Both file buttons share one row")
+    check(frame.tests.details.GetScreenRect().Contains(export_rect),
+          "File buttons stay inside the details pane at 1024 DIP")
+    check(files["import"].IsEnabled() and files["export"].IsEnabled(),
+          "Both file buttons are usable for a saved test")
+    check(main.scenario is not None and main.scenario.runnable,
+          "Selected test reports a runnable scenario")
+    check(frame.header.buttons["open"].IsEnabled(), "Start is enabled while a scenario exists")
+
+    outbox = OUTPUT / "smoke-export"
+    written = main.service.export(main.definition.id, outbox)
+    check(written.is_dir() and sorted(p.name for p in written.iterdir())
+          == ["target.csv", "test.json"],
+          "Export copies the whole profile folder with both files inside")
+    folder = main.service.folder_of(main.definition.id)
+    check(folder.name == main.definition.name,
+          "The profile folder name is the test name")
+
+    scenario_path = main.service.scenario_path(main.definition.id)
+    backup = scenario_path.read_text(encoding="utf-8")
+    main.service.clear_scenario(main.definition.id)
+    main.refresh_scenario()
+    frame.render()
+    # 시나리오는 선택이다. 없어도 시작할 수 있어야 한다.
+    check(main.scenario.state == "none" and frame.header.buttons["open"].IsEnabled(),
+          "Start stays enabled without a scenario (targets are optional)")
+    check("목표값 없이 실행" in frame.GetStatusBar().GetStatusText(),
+          "Status line says the run proceeds without targets")
+    check(pane.buttons["clear"].IsEnabled() is False, "Clear is disabled when there is no scenario")
+
+    # 반면 읽지 못하는 파일은 막아야 한다. 없음과 오류를 구별하는지 확인한다.
+    scenario_path.write_text("time,target_v\n0,bad\n", encoding="utf-8")
+    main.refresh_scenario()
+    frame.render()
+    check(main.scenario.state == "error" and not frame.header.buttons["open"].IsEnabled(),
+          "Broken scenario disables Start instead of running with unintended targets")
+    check("읽을 수 없습니다" in frame.GetStatusBar().GetStatusText(),
+          "Status line explains the scenario cannot be read")
+
+    scenario_path.write_text(backup, encoding="utf-8", newline="")
+    main.refresh_scenario()
+    frame.render()
+    check(main.scenario.runnable and frame.header.buttons["open"].IsEnabled(),
+          "Restoring the scenario re-enables Start")
+
+
 def prepared():
-    check(frame.experiment is not None, "Experiment opens in separate frame")
+    exp = frame.experiment
+    assert exp is not None
+    check(exp is not None, "Experiment opens in separate frame")
+    buttons = exp.header.buttons
+    check("copy" not in buttons and "results" not in buttons,
+          "Experiment toolbar omits data copy and results dialog")
+    check("charts" in buttons and buttons["charts"].icon is not None,
+          "Result chart button reuses the former results icon")
     frame.experiment.start()
     later(running, 1200)
 
@@ -313,6 +388,13 @@ def narrow_experiment():
     stop = exp.header.buttons["stop"]
     rect = stop.GetScreenRect()
     check(exp.GetScreenRect().Contains(rect), "Stop button stays inside 1024 DIP window")
+    # 수집은 스스로 끝나지 않는다. 중지를 누르기 전까지 살아 있어야 한다.
+    check(experiment.sessions.current.state == State.RUNNING,
+          "Session keeps running until the user stops it")
+    check(experiment.sessions.sensors.continuous,
+          "Demo source declares itself continuous (no fixed-length cutoff)")
+    check("중지를 누를 때까지" in exp.GetStatusBar().GetStatusText(),
+          "Status line promises collection until stop, not a fixed 30 seconds")
     for pane in exp.sensors.values():
         for card in pane.cards.values():
             check(exp.GetClientRect().Contains(exp.ScreenToClient(card.GetScreenPosition()))
@@ -328,18 +410,16 @@ def stopped():
         later(stopped)
         return
     check(experiment.sessions.view().state == State.STOPPED, "Stop waits for recording finalization")
-    def inspect_results():
-        dialog = frame.result_dialog
-        try:
-            check(dialog is not None and len(dialog.results.items) >= 1,
-                  "Experiment results open separately from main Test screen")
-            capture(dialog, "results-dialog")
-        finally:
-            dialog.EndModal(wx.ID_CLOSE)
-    later(inspect_results, 100)
-    frame.show_results(experiment.sessions.view().session_id)
-    check(frame.tests.IsShown(), "Main screen stays on Test management after results close")
-    frame.experiment.request_close(confirm=False)
+    exp = frame.experiment
+    assert exp is not None
+    check(exp.header.buttons["charts"].IsEnabled(), "Result chart is available after recording closes")
+    exp.toggle_charts()
+    check(exp.showing_charts and exp.header.buttons["charts"].GetLabel() == "측정 화면",
+          "Result chart replaces the measurement body")
+    exp.toggle_charts()
+    check(not exp.showing_charts and exp.header.buttons["charts"].GetLabel() == "결과 그래프",
+          "Result chart returns to the measurement body")
+    exp.request_close(confirm=False)
     check(frame.experiment is None, "Experiment close releases frame reference and timer")
     finish()
 

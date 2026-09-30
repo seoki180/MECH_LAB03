@@ -24,7 +24,11 @@ class TelemetryService:
                 if sample.session_id != self.session_id:
                     continue
                 previous = self.samples.get(sample.channel_id)
-                if previous is None or sample.sequence > previous.sequence:
+                # 재생 소스는 세션이 세는 sequence로 순서가 정해지지만, push 소스
+                # (WebSocket)는 자기 sequence를 알 수 없어 0으로 둘 수 있다. 그때는
+                # 수신 시각으로 최신을 가린다. 둘 다 오래된 표본은 버린다.
+                if previous is None or sample.sequence > previous.sequence \
+                        or sample.monotonic_received > previous.monotonic_received:
                     self.samples[sample.channel_id] = sample
             if gps and gps.session_id == self.session_id and (self.gps is None or gps.monotonic_received > self.gps.monotonic_received):
                 self.gps = gps

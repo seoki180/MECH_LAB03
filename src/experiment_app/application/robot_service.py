@@ -50,6 +50,12 @@ class RobotService:
             "experiment_data": definition.experiment_data,
             "ar_trapezoidal_step": definition.ar_trapezoidal_step,
             "pf_straight_line": definition.pf_straight_line,
+            # 시험시나리오는 시간에 따른 목표값 열이라 설정값과 함께 한 번 보낸다.
+            # 시나리오가 없으면 빈 목록이 아니라 None을 보낸다. 빈 목록은 '점이 없는
+            # 곡선'으로 읽힐 수 있어 '목표값 없음'과 구별되지 않는다. 실제 장비의
+            # 수신 규격은 미확정이므로 확정되면 이 표현을 맞춘다.
+            "scenario": ([[point.time, point.target_v] for point in session.snapshot.scenario]
+                         or None),
         })
         self.update(state="설정 확인 완료")
 

@@ -2,6 +2,7 @@ from copy import deepcopy
 from dataclasses import replace
 from threading import Event
 import json
+import time
 import pytest
 from experiment_app.bootstrap import build_services
 from experiment_app.application.robot_service import RobotService
@@ -33,7 +34,24 @@ class InspectTransport(DemoRobotTransport):
         super().disconnect(**kwargs)
 
 
-def finish(sessions):
+def finish(sessions, stop=True):
+    """수집을 끝내고 결과를 돌려준다.
+
+    가상 센서는 끝이 없으므로 기본적으로 중지 요청을 보내야 끝난다. 시작 직후에
+    멈추면 로봇 명령이 아직 나가지 않아 검사가 헛돌므로, 수집이 실제로 돌기 시작한
+    뒤에 중지한다. 스스로 끝나는 경우(오류)는 stop=False로 기다리기만 한다.
+    """
+    if stop:
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            current = sessions.current
+            if current is not None and current.state == State.RUNNING and current.elapsed > 0:
+                break
+            if sessions.worker is None or not sessions.worker.is_alive():
+                break
+            time.sleep(0.01)
+        if sessions.current is not None:
+            sessions.stop(sessions.current.session_id)
     sessions.worker.join(4)
     assert not sessions.worker.is_alive()
     assert sessions.is_idle()
@@ -42,7 +60,7 @@ def finish(sessions):
 
 def test_transmits_saved_snapshot_receives_and_records(tmp_path):
     transport = InspectTransport()
-    main, experiment = build_services(tmp_path, duration=0.1, robot_transport=transport)
+    main, experiment = build_services(tmp_path, robot_transport=transport)
     try:
         saved = main.service.save_patch(FieldPatch("demo-0", 1, {
             "robot/ar_trapezoidal_step/apply_rate": "12",
@@ -55,7 +73,7 @@ def test_transmits_saved_snapshot_receives_and_records(tmp_path):
         assert sessions.start(session.session_id)
         assert not sessions.start(session.session_id)
         result = finish(sessions)
-        assert result.state == State.COMPLETED
+        assert result.state == State.STOPPED
         assert [c.operation for c in transport.commands] == ["configure", "start", "stop"]
         payload = transport.commands[0].payload
         assert payload["test_revision"] == saved.revision
@@ -81,12 +99,14 @@ def test_transmits_saved_snapshot_receives_and_records(tmp_path):
                                       ("stop", "ROBOT_REJECTED")])
 def test_command_failure_marks_incomplete_and_disconnects(tmp_path, fail, code):
     transport = InspectTransport(fail)
-    main, experiment = build_services(tmp_path, duration=0.06, robot_transport=transport)
+    main, experiment = build_services(tmp_path, robot_transport=transport)
     try:
         sessions = experiment.sessions
         session = sessions.prepare("demo-0", 1)
         sessions.start(session.session_id)
-        result = finish(sessions)
+        # configure/wrong_reply는 시작 중 스스로 오류로 끝난다. stop 거부는 중지를
+        # 요청해야 드러나므로 그때만 중지를 보낸다.
+        result = finish(sessions, stop=(fail == "stop"))
         assert result.state == State.ERROR and code in result.end_reason
         assert transport.closed and sessions.robot.view().state == "오류"
         assert sessions.results.list()[0]["completeness"] == "불완전"

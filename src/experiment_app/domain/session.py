@@ -1,5 +1,6 @@
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from .scenario import ScenarioPoint
 from .test_definition import TestDefinition, AppError
 
 
@@ -32,6 +33,8 @@ LABELS = {State.PREPARING: "준비 중", State.READY: "준비됨", State.STARTIN
 class ExecutionSnapshot:
     definition: TestDefinition
     channels: tuple[tuple[str, str, str, str], ...]
+    # 실행 시점에 고정된 시험시나리오. 이후 파일을 바꿔도 진행 중인 실험은 영향받지 않는다.
+    scenario: tuple[ScenarioPoint, ...] = ()
 
 
 @dataclass(frozen=True)

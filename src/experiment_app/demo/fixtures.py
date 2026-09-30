@@ -22,15 +22,36 @@ DATA_FIELDS = {
 CHANNELS = tuple((part, f"{part}.{i}", f"Demo {part} · {i + 1}", "demo unit")
                  for part in "ABC" for i in range(2))
 SCENARIOS = ("정상", "센서 지연/단절", "값 오류", "GPS fix 손실", "지도 배경 실패", "기록 실패", "저장 실패")
+# 데모 시험시나리오 길이와 간격. 실제 장비의 요구가 아니라 UI/흐름 확인용이다.
+DEMO_SCENARIO_SECONDS = 30.0
+DEMO_SCENARIO_STEP = 0.1
+
+
+def demo_scenario(definition=None):
+    """데모용 target 곡선. 양식은 자료의 10km_target.csv(time,target_v)와 같다.
+
+    0에서 목표 속도까지 올린 뒤 유지하는 단순한 곡선이며, 실제 시험 프로파일이 아니다.
+    """
+    from experiment_app.domain.scenario import ScenarioPoint
+    peak = 10.0
+    ramp = DEMO_SCENARIO_SECONDS / 3
+    points = []
+    steps = int(round(DEMO_SCENARIO_SECONDS / DEMO_SCENARIO_STEP)) + 1
+    for index in range(steps):
+        time = round(index * DEMO_SCENARIO_STEP, 3)
+        points.append(ScenarioPoint(time, round(peak * min(1.0, time / ramp), 6)))
+    return tuple(points)
 
 
 def fixtures():
-    groups = {"group-a": "시험목록 A · 데모", "group-b": "시험목록 B · 데모"}
+    # 폴더 저장소에서는 시험목록 폴더 이름이 곧 group_id다. 데모 자료도 같은 규칙을 쓴다.
+    groups = {"시험목록 A · 데모": "시험목록 A · 데모", "시험목록 B · 데모": "시험목록 B · 데모"}
+    names = list(groups)
     definitions = []
     for index in range(6):
         specs = tuple(SpecItem(f"step-{index}-{i}", f"단계 {i + 1}",
                      (("target", 10.0 * (i + 1)), ("duration", 10.0), ("enabled", True))) for i in range(3))
-        definitions.append(TestDefinition(f"demo-{index}", "group-a" if index < 3 else "group-b",
+        definitions.append(TestDefinition(f"demo-{index}", names[0] if index < 3 else names[1],
                            1, "demo", f"데모 시험 {index + 1:02}", 1, specs,
                            experiment_data=deepcopy(DEFAULT_EXPERIMENT_DATA)))
     return groups, definitions

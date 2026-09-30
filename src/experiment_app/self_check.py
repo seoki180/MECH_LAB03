@@ -51,7 +51,21 @@ def run(report=None):
         notes.append(f"지도: 팩 없음 (배경 없이 동작). 찾은 위치: {map_dir}")
     tiles.close()
 
-    # 4. NMEA는 없으면 앱이 안내와 함께 멈추므로 상태만 보고한다.
+    # 4. 시험 폴더는 실행 파일 밖에 있어야 사용자가 시험을 주고받을 수 있다.
+    tests_root = paths.tests_dir()
+    inside_bundle = paths.is_frozen() and str(tests_root).startswith(str(paths.bundle_root()))
+    check(not inside_bundle, f"시험 폴더가 번들 밖에 있음: {tests_root}")
+    if tests_root.is_dir():
+        groups = [c for c in tests_root.iterdir() if c.is_dir() and not c.name.startswith(".")]
+        files = sorted(tests_root.glob("*/*.json"))
+        missing = [p.name for p in files if not p.with_suffix(".csv").is_file()]
+        notes.append(f"시험: 시험목록 {len(groups)}개, 시험 {len(files)}개 ({tests_root})")
+        if missing:
+            notes.append(f"시나리오 없는 시험(실행 불가): {', '.join(missing)}")
+    else:
+        notes.append(f"시험: 폴더 없음 (첫 실행 시 생성). 위치: {tests_root}")
+
+    # 5. NMEA는 없으면 앱이 안내와 함께 멈추므로 상태만 보고한다.
     notes.append(f"NMEA: {paths.default_nmea() or '없음 — nmea 폴더에 .nmea를 넣으세요'}")
 
     lines = list(notes)

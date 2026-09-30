@@ -3,8 +3,9 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from experiment_app.demo.fixtures import fixtures, schemas, CHANNELS, BASIC_FIELDS, STEP_FIELDS, SCENARIOS
-from experiment_app.infrastructure.repositories import LocalTestRepository
+from experiment_app.demo.fixtures import (fixtures, schemas, demo_scenario, CHANNELS,
+                                          BASIC_FIELDS, STEP_FIELDS, SCENARIOS)
+from experiment_app.infrastructure.test_folders import FolderTestRepository
 from experiment_app.infrastructure.results import LocalResultRepository
 from experiment_app.infrastructure.sources import FakeSensorSource, FakeGpsSource, SystemClock
 from experiment_app.infrastructure.nmea import NMEA_CHANNELS, NmeaReplay, NmeaSensorSource, NmeaGpsSource
@@ -17,14 +18,25 @@ from experiment_app.application.session_service import SessionService
 from experiment_app.application.telemetry_service import TelemetryService
 from experiment_app.application.result_service import ResultService
 from experiment_app.application.copy_service import CopyService
+from experiment_app.application.analysis_service import AnalysisService
 from experiment_app.presentation.main_presenter import MainPresenter
 from experiment_app.presentation.experiment_presenter import ExperimentPresenter
 
 
-def build_services(data_dir, duration=30, nmea_path=None, robot_transport=None):
+def build_services(data_dir, duration=None, nmea_path=None, robot_transport=None, tests_dir=None):
+    """duration은 측정 시간 상한(초)이다. None이면 중지할 때까지 계속 받는다.
+
+    실제 운용은 None이다. 값을 주는 곳은 테스트와 스모크뿐이며, 시험의 길이를 정하는
+    설정이 아니라 자동 검증을 짧게 끝내기 위한 장치다.
+    """
     data_dir = Path(data_dir)
+    # 시험 정의는 실행 파일 밖 test/ 폴더에서 직접 관리한다. 실행 시에는 bootstrap.run()이
+    # paths.tests_dir()을 넘기고, 지정이 없으면 저장 폴더 아래를 쓴다.
+    tests_dir = Path(tests_dir) if tests_dir else data_dir / "test"
     groups, definitions = fixtures()
-    repository = LocalTestRepository(data_dir / "tests.json", groups, definitions)
+    repository = FolderTestRepository(tests_dir, groups, definitions,
+                                      legacy_path=data_dir / "tests.json",
+                                      scenario_factory=demo_scenario)
     test_service = TestService(repository, schemas)
     telemetry = TelemetryService()
     clock = SystemClock()
@@ -39,8 +51,11 @@ def build_services(data_dir, duration=30, nmea_path=None, robot_transport=None):
                               lambda: JsonlRecorder(data_dir / "recordings"), telemetry, results, clock, duration,
                               robot=RobotService(robot_transport if robot_transport is not None else DemoRobotTransport(clock), clock))
     main_presenter = MainPresenter(test_service, definitions[0])
+    # 결과 그래프는 기록 파일을 다시 읽어 그린다. 채널은 sessions에서 읽으므로
+    # 장치 탭에서 NMEA 파일을 바꿔도 라벨·단위가 화면과 어긋나지 않는다.
+    analysis = AnalysisService(results, sessions)
     experiment_presenter = ExperimentPresenter(sessions, telemetry, CopyService(clock), clock,
-                                               nmea_sources, nmea_path)
+                                               nmea_sources, nmea_path, analysis)
     return main_presenter, experiment_presenter
 
 
@@ -136,7 +151,7 @@ def alert(body, title="MECHLab"):
         pass
 
 
-def write_startup_log(notices, data_dir, map_pack, nmea_path):
+def write_startup_log(notices, data_dir, map_pack, nmea_path, tests_dir=None):
     """시작 경로와 안내를 실행 파일 옆 로그에 남긴다.
 
     windowed 빌드는 콘솔이 없어 진단 출력이 전부 사라진다. 창이 뜨지 않았을 때
@@ -146,6 +161,7 @@ def write_startup_log(notices, data_dir, map_pack, nmea_path):
     lines = [f"MECHLab 시작 {datetime.now().astimezone().isoformat(timespec='seconds')}"]
     lines += [f"{key}: {value}" for key, value in paths.describe().items()]
     lines += [f"사용할 data_dir: {data_dir}", f"사용할 map_pack: {map_pack}",
+              f"사용할 tests_dir: {tests_dir}",
               f"사용할 nmea: {nmea_path or '없음 (내장 데모 센서)'}"]
     lines += notices
     try:
@@ -172,7 +188,11 @@ def run():
     from experiment_app import paths
     parser = argparse.ArgumentParser(description="MECHLab 데모 실험 관리")
     parser.add_argument("--data-dir", type=Path, default=None,
-                        help=f"저장 폴더. 기본값은 실행 파일 옆 .mechlab ({paths.DATA_DIR_ENV} 환경 변수로도 지정)")
+                        help=f"기록·결과 저장 폴더. 기본값은 실행 파일 옆 .mechlab ({paths.DATA_DIR_ENV} 환경 변수로도 지정)")
+    parser.add_argument("--tests-dir", type=Path, default=None,
+                        help="시험 폴더. 실행 파일 밖에 두며 기본값은 실행 파일 옆 test "
+                             f"({paths.TESTS_DIR_ENV} 환경 변수로도 지정). "
+                             "구조는 test/<시험목록>/<시험>.json 과 같은 이름의 .csv 시나리오다.")
     parser.add_argument("--map-pack", type=Path, default=None,
                         help="오프라인 지도 타일팩(.mbtiles) 디렉터리. 실행 파일 밖에 두며 "
                              f"기본값은 실행 파일 옆 maps ({paths.MAP_PACK_ENV} 환경 변수로도 지정). "
@@ -189,11 +209,13 @@ def run():
     args = parser.parse_args()
     # 우선순위: 명령줄 인자 > 환경 변수 > 실행 파일 옆 기본 폴더.
     data_dir = args.data_dir or paths.data_dir()
+    tests_dir = args.tests_dir or paths.tests_dir()
     map_pack = args.map_pack or paths.map_pack_dir()
     nmea_path = args.nmea or paths.default_nmea()
     if args.print_paths:
         lines = [f"{key}: {value}" for key, value in paths.describe().items()]
-        lines += [f"사용할 data_dir: {data_dir}", f"사용할 map_pack: {map_pack}",
+        lines += [f"사용할 data_dir: {data_dir}", f"사용할 tests_dir: {tests_dir}",
+                  f"사용할 map_pack: {map_pack}",
                   f"사용할 nmea: {nmea_path}"]
         emit("\n".join(lines), args.report)
         return
@@ -213,7 +235,10 @@ def run():
         notices.append(f"NMEA 로그를 찾지 못해 내장 데모 센서로 실행합니다. "
                        f"{paths.external_root() / 'nmea'} 폴더에 .nmea 파일을 넣으면 재생합니다.")
     # Load persisted state before the GUI event loop; all subsequent disk I/O is asynchronous.
-    main_presenter, experiment_presenter = build_services(data_dir, nmea_path=nmea_path)
+    main_presenter, experiment_presenter = build_services(data_dir, nmea_path=nmea_path,
+                                                          tests_dir=tests_dir)
+    for path, error in main_presenter.service.repository.load_errors:
+        notices.append(f"시험을 읽지 못했습니다: {path.parent.name} ({error})")
     tiles, failures = MapPackSet.load(map_pack)
     for path, error in failures:
         notices.append(f"타일팩을 열지 못했습니다: {path} ({error})")
@@ -223,7 +248,7 @@ def run():
     # 로그 파일에 남겨 '실행했는데 아무 반응이 없다'를 확인할 수 있게 한다.
     for line in notices:
         safe_print(line)
-    write_startup_log(notices, data_dir, map_pack, nmea_path)
+    write_startup_log(notices, data_dir, map_pack, nmea_path, tests_dir)
     import wx
     from experiment_app.ui.adapters.clipboard import WxClipboard
     from experiment_app.ui.frames.main_frame import MainFrame

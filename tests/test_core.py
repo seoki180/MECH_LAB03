@@ -14,7 +14,7 @@ from experiment_app.domain.test_definition import FieldPatch, AppError
 from experiment_app.domain.test_definition import DEFAULT_EXPERIMENT_DATA
 from experiment_app.domain.session import State
 from experiment_app.domain.telemetry import SensorSample
-from experiment_app.infrastructure.repositories import LocalTestRepository
+from experiment_app.infrastructure.test_folders import FolderTestRepository
 from experiment_app.application.test_service import TestService as DefinitionService
 from experiment_app.presentation.view_models import metric_model
 from experiment_app.infrastructure.tiles import MBTilesSource, MapPackSet
@@ -80,7 +80,7 @@ def test_experiment_data_edit_persistence_and_session_snapshot(services, tmp_pat
                                               {"data/zero_brake_angle": "-20"}))
     assert session.snapshot.definition.experiment_data["zero_brake_angle"] == -15.0
     assert later.experiment_data["zero_brake_angle"] == -20.0
-    restored = LocalTestRepository(tmp_path / "tests.json", {}, [])
+    restored = FolderTestRepository(tmp_path / "test")
     assert restored.get(saved.id).experiment_data == later.experiment_data
 
 
@@ -96,19 +96,26 @@ def test_experiment_data_rejects_invalid_or_unknown_fields(services):
     assert main.service.repository.get(original.id) == original
 
 
-def test_legacy_saved_test_gets_experiment_data(tmp_path):
+def test_legacy_single_file_migrates_into_test_folders(tmp_path):
+    """예전 .mechlab/tests.json은 test/<시험목록>/<시험>/test.json 으로 한 번 옮겨진다."""
     from dataclasses import asdict
     groups, definitions = fixtures()
     legacy = asdict(definitions[0])
     legacy.pop("experiment_data")
     legacy.pop("ar_trapezoidal_step")
     legacy.pop("pf_straight_line")
-    (tmp_path / "tests.json").write_text(json.dumps({"schema_version": 1, "groups": groups,
-                                                      "tests": [legacy]}), encoding="utf-8")
-    restored = LocalTestRepository(tmp_path / "tests.json", {}, [])
-    assert restored.get(legacy["id"]).experiment_data == DEFAULT_EXPERIMENT_DATA
-    assert restored.get(legacy["id"]).ar_trapezoidal_step is None
-    assert restored.get(legacy["id"]).pf_straight_line is None
+    source = tmp_path / "tests.json"
+    source.write_text(json.dumps({"schema_version": 1, "groups": groups,
+                                  "tests": [legacy]}, ensure_ascii=False), encoding="utf-8")
+    root = tmp_path / "test"
+    restored = FolderTestRepository(root, legacy_path=source)
+    assert sorted(p.name for p in root.iterdir()) == sorted(groups)
+    moved = restored.get(legacy["id"])
+    assert moved.experiment_data == DEFAULT_EXPERIMENT_DATA
+    assert moved.ar_trapezoidal_step is None and moved.pf_straight_line is None
+    assert (root / moved.group_id / moved.name / "test.json").is_file()
+    # 두 번째 생성은 이미 폴더가 있으므로 다시 옮기지 않는다.
+    assert len(FolderTestRepository(root, legacy_path=source).list()) == 1
 
 
 def test_service_enforces_partial_policy(services):
@@ -167,12 +174,18 @@ def test_snapshot_and_repeated_start_stop(services):
     assert not any(t.name.startswith("mechlab-acquisition") or t.name.startswith("mechlab-recorder") for t in threads())
 
 
-def test_auto_complete_record_copy_and_restore(services, tmp_path):
+def test_record_copy_and_restore(services, tmp_path):
+    """가상 센서는 끝이 없으므로 중지할 때까지 받고, 그 기록으로 복사·복원이 된다."""
     main, experiment = services
     session = prepare(main, experiment)
     experiment.sessions.start(session.session_id)
+    # 표본이 쌓일 때까지 기다린 뒤 사람이 중지하는 것과 같은 경로로 멈춘다.
+    wait(lambda: len(experiment.telemetry.snapshot().samples) >= 4)
+    experiment.sessions.stop(session.session_id)
     wait(experiment.sessions.is_idle)
-    assert experiment.sessions.view().state == State.COMPLETED
+    view = experiment.sessions.view()
+    assert view.state == State.STOPPED
+    assert view.end_reason == "사용자 중지"
     data = list(csv.DictReader(io.StringIO(experiment.copy()), delimiter="\t"))
     assert len(data) == 6  # Four displayed channels, two GPS rows.
     assert {r["session_id"] for r in data} == {session.session_id}
@@ -207,7 +220,7 @@ def test_catalog_persistence_and_order(services, tmp_path):
     repository = main.service.repository
     main.service.save_patch(FieldPatch("demo-0", 1, {"name": "영속 저장"}))
     repository.reorder("demo-0", 1)
-    restored = LocalTestRepository(tmp_path / "tests.json", {}, [])
+    restored = FolderTestRepository(tmp_path / "test")
     assert restored.get("demo-0").name == "영속 저장"
     assert restored.list()[1].id == "demo-0"
     assert restored.get("demo-0").revision == 2
@@ -434,7 +447,7 @@ def test_robot_settings_legacy_patch_restore_snapshot_and_duplicate(services, tm
     assert later.pf_straight_line["join_anywhere"] is None
     assert session.snapshot.definition.ar_trapezoidal_step["apply_rate"] == 526.32
     groups, definitions = fixtures()
-    restored = LocalTestRepository(tmp_path / "tests.json", groups, definitions)
+    restored = FolderTestRepository(tmp_path / "test")
     assert restored.get(saved.id) == later
     duplicate = main.service.duplicate(later)
     duplicate.pf_straight_line["start_x"] = 42
@@ -483,7 +496,7 @@ def test_explicit_edit_cancel_save_and_conflict(services):
     wait(lambda: main.pending[0].done())
     main.poll()
     assert outcomes[-1][1] is None and not main.editing and not main.dirty
-    main.new("group-a", duplicate=True)
+    main.new(main.definition.group_id, duplicate=True)
     baseline = main.definition
     assert not main.editing
     main.begin_edit()

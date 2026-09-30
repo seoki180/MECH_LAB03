@@ -69,3 +69,29 @@ class TestService:
             raise AppError("VALIDATION_FAILED", "최소 한 단계가 필요합니다.")
         self.validate(definition, {k: v for k, v in definition.fields().items() if k != "type_id"})
         return self.repository.save(definition, expected_revision)
+
+    # -------------------------------------------------- 시험 파일과 시험시나리오
+
+    def scenario(self, test_id):
+        """시험시나리오(time,target_v). 파일이 없으면 빈 열."""
+        return self.repository.scenario(test_id)
+
+    def scenario_path(self, test_id):
+        return self.repository.scenario_path(test_id)
+
+    def set_scenario(self, test_id, source):
+        return self.repository.set_scenario(test_id, source)
+
+    def clear_scenario(self, test_id):
+        self.repository.clear_scenario(test_id)
+
+    def export(self, test_id, destination):
+        """시험 profile 폴더를 통째로 지정한 위치에 복사한다."""
+        return self.repository.export(test_id, destination)
+
+    def import_test(self, source, group_id):
+        """외부 시험 폴더를 시험목록으로 통째로 들여온다."""
+        return self.repository.import_test(source, group_id)
+
+    def folder_of(self, test_id):
+        return self.repository.folder_of(test_id)

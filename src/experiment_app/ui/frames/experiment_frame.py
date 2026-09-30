@@ -1,20 +1,22 @@
 import wx
 from wx.lib.scrolledpanel import ScrolledPanel
 from experiment_app.domain.session import State, ACTIVE, TERMINAL, LABELS
+from experiment_app.domain.test_definition import AppError
 from experiment_app.ui.theme import style, text, CONCRETE, MUTED
 from experiment_app.ui.components.header import Header
 from experiment_app.ui.panes.sensor_part import SensorPartPane
 from experiment_app.ui.panes.gps_map import GpsMapPane
+from experiment_app.ui.panes.result_charts import ResultChartsPane
 
 TONES = {State.STARTING: "active", State.RUNNING: "active", State.STOPPING: "active",
          State.COMPLETED: "ok", State.ERROR: "error"}
 
 
 class ExperimentFrame(wx.Frame):
-    def __init__(self, parent, presenter, clipboard, tiles, on_results, on_closed):
+    def __init__(self, parent, presenter, tiles, on_closed):
         super().__init__(parent, title="MECHLab 실험 (데모)")
-        self.presenter, self.clipboard = presenter, clipboard
-        self.on_results, self.on_closed = on_results, on_closed
+        self.presenter = presenter
+        self.on_closed = on_closed
         self.closing, self.disposed = False, False
         self.scenario = presenter.sessions.scenario
         style(self)
@@ -25,8 +27,7 @@ class ExperimentFrame(wx.Frame):
         definition = session.snapshot.definition
         self.header = Header(self, f"{definition.name} / r{definition.revision}", (
             ("start", "시작", self.start, True), ("stop", "중지", self.stop, "danger"), None,
-            ("copy", "데이터 복사 ▾", self.copy_menu, False),
-            ("results", "결과 보기", lambda: on_results(session.session_id), False),
+            ("charts", "결과 그래프", self.toggle_charts, False),
             ("cleanup", "종료 정리 재시도", self.presenter.sessions.retry_cleanup, False), None,
             ("main", "메인 보기", lambda: parent.Raise(), False),
         ))
@@ -44,6 +45,11 @@ class ExperimentFrame(wx.Frame):
         self.body_sizer.Add(self.map, 6, wx.EXPAND | wx.ALL, self.FromDIP(10))
         for pane in self.sensors.values():
             self.body_sizer.Add(pane, 2, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, self.FromDIP(4))
+        # 결과 그래프는 같은 본문 자리에 교체해 넣는다. 창을 새로 띄우지 않는다.
+        self.charts = ResultChartsPane(self.body)
+        self.charts.Hide()
+        self.body_sizer.Add(self.charts, 1, wx.EXPAND)
+        self.showing_charts = False
         self.body.SetSizer(self.body_sizer)
         self.body.SetupScrolling(scroll_x=False, rate_y=16)
         root.Add(self.body, 1, wx.EXPAND)
@@ -65,22 +71,35 @@ class ExperimentFrame(wx.Frame):
         self.presenter.sessions.stop(self.presenter.sessions.view().session_id)
         self.tick()
 
-    def copy_menu(self):
-        menu = wx.Menu()
-        for part, label in ((None, "현재 화면 채널 전체"), ("B", "횡방향·종방향"), ("C", "현재 속도·누적 이동거리")):
-            item = menu.Append(wx.ID_ANY, label)
-            menu.Bind(wx.EVT_MENU, lambda e, p=part: self.copy(p), item)
-        self.PopupMenu(menu)
-        menu.Destroy()
+    def toggle_charts(self):
+        """본문을 측정 화면과 결과 그래프 사이에서 바꾼다.
 
-    def copy(self, part=None):
-        content = self.presenter.copy(part)
-        if not content:
-            self.SetStatusText("복사할 측정 데이터가 아직 없습니다.")
-        elif self.clipboard.set_text(content):
-            self.SetStatusText("최신 화면 채널과 GPS를 TSV로 복사했습니다.")
-        else:
-            wx.MessageBox("클립보드를 사용할 수 없습니다. 데이터 복사를 다시 눌러 재시도하세요.", "클립보드 사용 불가", parent=self)
+        같은 창의 같은 자리를 교체한다. 그래프는 기록 파일을 읽어 그리므로 측정 중에는
+        쓸 수 없고(기록이 아직 닫히지 않았다), tick()이 버튼을 비활성으로 둔다.
+        """
+        if self.showing_charts:
+            self.show_charts(False)
+            return
+        session = self.presenter.sessions.view()
+        try:
+            analysis = self.presenter.analyse(session.session_id)
+        except AppError as error:
+            self.SetStatusText(f"결과 그래프를 그릴 수 없습니다: {error}")
+            return
+        self.charts.render(analysis)
+        self.show_charts(True)
+        self.SetStatusText("결과 그래프입니다. 같은 버튼을 다시 누르면 측정 화면으로 돌아갑니다.")
+
+    def show_charts(self, showing):
+        self.showing_charts = showing
+        self.map.Show(not showing)
+        for pane in self.sensors.values():
+            pane.Show(not showing)
+        self.charts.Show(showing)
+        self.header.buttons["charts"].SetLabel("측정 화면" if showing else "결과 그래프")
+        self.body.Layout()
+        self.body.FitInside()
+        self.Layout()
 
     def tick(self, event=None):
         if self.disposed:
@@ -95,18 +114,37 @@ class ExperimentFrame(wx.Frame):
                            f"{int(session.elapsed)//60:02}:{int(session.elapsed)%60:02}")
         self.header.buttons["start"].Enable(session.state == State.READY)
         self.header.buttons["stop"].Enable(session.state in {State.STARTING, State.RUNNING})
-        self.header.buttons["results"].Enable(session.state in TERMINAL and self.presenter.sessions.is_idle())
+        # 그래프는 기록 파일을 읽어 그린다. 기록이 닫히기 전에는 자료가 온전하지 않으므로
+        # 측정이 끝나고 정리까지 마친 뒤에만 켠다.
+        finished = session.state in TERMINAL and self.presenter.sessions.is_idle()
+        self.header.buttons["charts"].Enable(finished or self.showing_charts)
+        if self.showing_charts and not finished:
+            # 재실행 등으로 측정이 다시 시작되면 낡은 그래프를 남기지 않는다.
+            self.show_charts(False)
         self.header.buttons["cleanup"].Show(session.state == State.ERROR and not session.cleaned_up)
         snapshot = self.presenter.telemetry.snapshot()
-        self.header.buttons["copy"].Enable(bool(snapshot.samples or snapshot.gps))
-        models = self.presenter.metrics(snapshot)
-        for pane in self.sensors.values():
-            pane.render(models)
-        self.map.render(snapshot, self.scenario == "지도 배경 실패", live=session.state in ACTIVE)
-        if session.state in TERMINAL:
+        if not self.showing_charts:
+            # 그래프를 보는 동안에는 숨은 위젯을 갱신하지 않는다.
+            models = self.presenter.metrics(snapshot)
+            for pane in self.sensors.values():
+                pane.render(models)
+            self.map.render(snapshot, self.scenario == "지도 배경 실패", live=session.state in ACTIVE)
+        if self.showing_charts:
+            # 그래프 화면에서는 상태바가 그래프 안내를 유지한다.
+            pass
+        elif session.state in TERMINAL:
             self.SetStatusText(f"{LABELS[session.state]}: {session.end_reason}   세션 {session.session_id[:8]}")
         elif session.state == State.RUNNING:
-            self.SetStatusText(f"NMEA 파일을 재생하며 기록 중입니다. 최대 30초 후 자동으로 끝납니다.   세션 {session.session_id[:8]}")
+            # 끝이 있는 재생 소스와 끝이 없는 실시간 소스를 구분해 사실만 적는다.
+            source = self.presenter.sessions.sensors
+            if getattr(source, "continuous", False):
+                detail = "중지를 누를 때까지 계속 기록합니다."
+            else:
+                total = getattr(source, "duration", None)
+                detail = ("자료를 끝까지 재생하면 자동으로 끝납니다."
+                          if total is None else
+                          f"자료 {total:g}초를 끝까지 재생하면 자동으로 끝납니다.")
+            self.SetStatusText(f"기록 중입니다. {detail}   세션 {session.session_id[:8]}")
         elif session.state == State.STOPPING:
             self.SetStatusText("수집을 멈추고 기록을 정리하는 중입니다…")
         else:
@@ -152,6 +190,7 @@ class ExperimentFrame(wx.Frame):
         self.disposed = True
         self.timer.Stop()
         self.map.dispose()
+        self.charts.dispose()
         for pane in self.sensors.values():
             pane.dispose()
         self.presenter.sessions.release_ready()

@@ -8,6 +8,10 @@ build/
 dist/
 .mechlab/
 artifacts/
+# 개발 실행이 저장소 루트에 만드는 시험 폴더. 실제 시험 자료는 저장소 밖에서 관리한다.
+/test/
+# 실행 때마다 갱신되는 시작 로그.
+MECHLab-시작로그.txt
 
 # IDE 설정과 도구 로그는 개발자 환경에 속한다.
 .idea/

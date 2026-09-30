@@ -48,21 +48,61 @@ def test_replay_uses_first_valid_start_and_recorded_velocity(tmp_path):
     assert replay.gps_fix("s", 2, "정상").fix_quality == "NMEA · INS_RTKFIXED"
 
 
+def test_stationary_nmea_jitter_does_not_accumulate_distance():
+    path = Path(__file__).resolve().parent / "data" / "10km_log_head.nmea"
+    replay = NmeaReplay(path, SystemClock())
+    replay.prepare()
+    # 첫 7.7초 기록은 좌표가 수 cm 흔들리지만 전체 변위는 약 2.5 cm다.
+    # 매 위치 차이를 그대로 합하면 정차 중에도 누적 거리가 계속 올라간다.
+    assert replay.sensor_samples("s", replay.duration, 1, "정상")[5].value == 0.0
+
+
+def test_replay_does_not_bridge_missing_fix_when_motion_resumes(tmp_path):
+    path = tmp_path / "gap.nmea"
+    path.write_text(line(100, "INS_RTKFIXED", 37.2, 126.7, 1, 0)
+                    + line(101, "NONE", 0, 0, status="INS_ALIGNING")
+                    + line(102, "INS_RTKFIXED", 37.21, 126.7, 1, 0)
+                    + line(103, "INS_RTKFIXED", 37.21001, 126.7, 1, 0),
+                    encoding="ascii")
+    replay = NmeaReplay(path, SystemClock())
+    replay.prepare()
+    assert replay.sensor_samples("s", 2, 1, "정상")[5].value == 0.0
+    assert replay.sensor_samples("s", 3, 2, "정상")[5].value == pytest.approx(
+        displacement(37.21, 126.7, 37.21001, 126.7)[2])
+
+
 def test_supplied_file_drives_session(tmp_path):
     # 저장소에 포함된 픽스처를 쓴다. 원본 로그(asset/ 아래 2.1MB)는 참고 자료라
     # 저장소에 올리지 않으므로, glob으로 찾으면 CI에서 StopIteration으로 실패한다.
     path = Path(__file__).resolve().parent / "data" / "10km_log_head.nmea"
-    main, experiment = build_services(tmp_path, duration=0.12, nmea_path=path)
+    # 상한 없이 재생한다. 7.7초짜리 픽스처를 끝까지 읽고 스스로 끝나야 한다.
+    main, experiment = build_services(tmp_path, nmea_path=path)
     try:
         definition = main.service.repository.list()[0]
         session = experiment.sessions.prepare(definition.id, definition.revision)
         assert experiment.sessions.start(session.session_id)
-        experiment.sessions.worker.join(4)
-        assert experiment.sessions.view().state == State.COMPLETED
+        experiment.sessions.worker.join(30)
+        view = experiment.sessions.view()
+        # 시간 상한이 아니라 자료가 끝나서 완료된 것임을 사유로 확인한다.
+        assert view.state == State.COMPLETED
+        assert view.end_reason == "재생 자료 끝까지 수집 완료"
+        assert view.elapsed >= 7.7
         snapshot = experiment.telemetry.snapshot()
         assert snapshot.start_gps.latitude == pytest.approx(37.24584803403)
         assert snapshot.gps.fix_quality == "NMEA · INS_RTKFIXED"
         assert snapshot.movement[2] >= 0 and math.isfinite(snapshot.movement[2])
         assert {sample.unit for sample in snapshot.samples} == {"km/h", "m"}
+        assert next(sample.value for sample in snapshot.samples
+                    if sample.channel_id == "C.1") == 0.0
+        assert experiment.metrics(snapshot)["C.1"].value_text == "0.00"
+        # 원본 기록의 NMEA 품질 라벨은 '정상'이 아니어도 유효한 측정값이다.
+        result = experiment.analyse(session.session_id)
+        assert result.measured.label == "현재 속도"
+        assert result.measured.unit == "km/h"
+        assert result.measured.points
+        assert result.comparable
+        assert result.skipped == 0
+        assert result.measured.points[0][1] == pytest.approx(
+            math.hypot(0.0820, 0.0148) * 3.6)
     finally:
         main.dispose()

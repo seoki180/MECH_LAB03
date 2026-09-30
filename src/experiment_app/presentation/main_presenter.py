@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from uuid import uuid4
 from experiment_app.domain.test_definition import AppError, FieldPatch
+from .view_models import scenario_model
 
 
 class MainPresenter:
@@ -17,6 +18,10 @@ class MainPresenter:
         self.pending = None
         self.editing = False
         self.edit_baseline = None
+        # 선택한 시험의 시나리오 표시 상태(ScenarioViewModel). 시험이 없으면 None.
+        self.scenario = None
+        # 복제로 만든 초안이 저장될 때 따라 복사할 원본 시나리오 경로.
+        self.scenario_source = None
 
     @property
     def busy(self):
@@ -47,6 +52,50 @@ class MainPresenter:
         self.end_edit()
         self.definition = self.service.repository.get(test_id) if test_id else None
         self.changes, self.errors, self.structure_dirty = {}, {}, False
+        self.refresh_scenario()
+
+    def refresh_scenario(self):
+        """선택한 시험의 시나리오 상태를 다시 읽는다.
+
+        파일 한 개를 읽을 뿐이라 선택 시점에 동기로 처리한다. 쓰기(가져오기/내보내기)는
+        executor로 보낸다.
+        """
+        if self.definition is None or self.definition.revision == 0:
+            self.scenario = None
+            return self.scenario
+        try:
+            points = self.service.scenario(self.definition.id)
+            # 안쪽 파일 이름은 고정이라 폴더 이름을 함께 보여야 어느 시험인지 알 수 있다.
+            path = self.service.scenario_path(self.definition.id)
+            self.scenario = scenario_model(points, file_name=f"{path.parent.name}/{path.name}")
+        except AppError as error:
+            self.scenario = scenario_model((), error=error)
+        return self.scenario
+
+    def import_scenario(self, source, callback):
+        """CSV 파일을 현재 시험의 시나리오로 삼는다."""
+        if self.definition is None or self.busy:
+            return
+        test_id = self.definition.id
+        self.submit(lambda: self.service.set_scenario(test_id, source), callback)
+
+    def clear_scenario(self, callback):
+        if self.definition is None or self.busy:
+            return
+        test_id = self.definition.id
+        self.submit(lambda: self.service.clear_scenario(test_id), callback)
+
+    def export(self, destination, callback):
+        """현재 시험 폴더를 통째로 지정한 위치에 복사한다."""
+        if self.definition is None or self.busy:
+            return
+        test_id = self.definition.id
+        self.submit(lambda: self.service.export(test_id, destination), callback)
+
+    def import_test(self, source, group_id, callback):
+        if self.busy:
+            return
+        self.submit(lambda: self.service.import_test(source, group_id), callback)
 
     def edit(self, path, raw_value):
         if self.busy or self.definition is None or not self.editing:
@@ -64,10 +113,15 @@ class MainPresenter:
     def new(self, group_id, duplicate=False):
         self.end_edit()
         source = self.definition if duplicate else self.new_template
+        # 복제는 시나리오도 따라가야 같은 시험이 된다. 원본 경로를 기억해 두었다가
+        # 저장이 끝난 뒤 새 파일 옆으로 복사한다.
+        self.scenario_source = (self.service.scenario_path(source.id)
+                                if duplicate and source is not None and source.revision else None)
         self.definition = self.service.duplicate(source, group_id)
         if not duplicate:
             self.definition = replace(self.definition, name="새 시험")
         self.changes, self.errors, self.structure_dirty = {}, {}, False
+        self.scenario = None
 
     def structure(self, operation, step_id):
         if self.definition is None or self.busy or not self.editing:
@@ -104,9 +158,14 @@ class MainPresenter:
         else:
             self.service.validate(self.definition, self.changes)
         definition, changes = self.definition, dict(self.changes)
+        scenario_source = self.scenario_source
         def action():
             if definition.revision == 0:
-                return self.service.save_new(definition, changes, require_edit=self.editing)
+                saved = self.service.save_new(definition, changes, require_edit=self.editing)
+                # 복제본은 원본 시나리오를 그대로 물려받는다.
+                if scenario_source is not None and scenario_source.is_file():
+                    self.service.set_scenario(saved.id, scenario_source)
+                return saved
             if self.structure_dirty:
                 parsed = self.service.validate(definition, changes)
                 return self.service.save_structure(definition.patched(parsed), definition.revision, require_edit=True)
@@ -131,6 +190,8 @@ class MainPresenter:
             self.end_edit()
             self.definition = result
             self.changes, self.errors, self.structure_dirty = {}, {}, False
+            self.scenario_source = None
+            self.refresh_scenario()
         callback(result, None)
 
     def dispose(self):

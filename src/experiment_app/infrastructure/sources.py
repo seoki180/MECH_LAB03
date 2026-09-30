@@ -13,6 +13,10 @@ class SystemClock:
 
 
 class FakeSensorSource:
+    """가상 센서. 끝이 없으므로 중지할 때까지 계속 값을 만든다."""
+
+    continuous = True
+
     def __init__(self, channels, clock):
         self.channels, self.clock = channels, clock
 

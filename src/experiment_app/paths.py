@@ -31,6 +31,7 @@ from pathlib import Path
 MAP_PACK_ENV = "MECHLAB_MAP_PACK"
 NMEA_ENV = "MECHLAB_NMEA"
 DATA_DIR_ENV = "MECHLAB_DATA_DIR"
+TESTS_DIR_ENV = "MECHLAB_TESTS_DIR"
 
 # 여러 .nmea가 있을 때 고르는 기본 로그. 개발 환경에서 쓰던 파일을 유지한다.
 PREFERRED_NMEA = "10km_log.nmea"
@@ -88,9 +89,20 @@ def map_pack_dir():
 
 
 def data_dir():
-    """앱이 쓰는 저장 폴더(Test 목록, 기록, 결과)."""
+    """앱이 쓰는 저장 폴더(기록, 결과)."""
     override = os.environ.get(DATA_DIR_ENV)
     return Path(override).expanduser() if override else external_root() / ".mechlab"
+
+
+def tests_dir():
+    """시험 정의 폴더. 실행 파일 밖에 두어 사용자가 직접 관리한다.
+
+    구조는 ``test/<시험목록 폴더>/<시험 이름>.json`` 이고, 같은 폴더의 같은 이름
+    ``.csv`` 가 그 시험의 시험시나리오다. 앱을 다시 빌드하지 않고 파일을 주고받아
+    시험을 옮길 수 있어야 하므로 번들 안이 아니라 바깥 폴더에서 읽고 쓴다.
+    """
+    override = os.environ.get(TESTS_DIR_ENV)
+    return Path(override).expanduser() if override else external_root() / "test"
 
 
 def default_nmea():
@@ -119,5 +131,6 @@ def describe():
         "external_root": external_root(),
         "map_pack_dir": map_pack_dir(),
         "data_dir": data_dir(),
+        "tests_dir": tests_dir(),
         "nmea": default_nmea(),
     }

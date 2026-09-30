@@ -3,10 +3,11 @@ from wx.lib.scrolledpanel import ScrolledPanel
 from experiment_app.ui.theme import text, button, surface, section_bar, chip, set_chip, MUTED
 from .parameter_editor import ParameterEditorPane
 from .specification import SpecificationPane
+from .scenario import ScenarioPane
 
 
 class TestDetailsPane(ScrolledPanel):
-    def __init__(self, parent, fields, on_patch, on_structure):
+    def __init__(self, parent, fields, on_patch, on_structure, file_commands=None):
         super().__init__(parent)
         surface(self)
         basic, steps = fields
@@ -14,7 +15,18 @@ class TestDetailsPane(ScrolledPanel):
         root = wx.BoxSizer(wx.VERTICAL)
         title_row = wx.BoxSizer(wx.HORIZONTAL)
         self.heading = text(self, "시험을 선택하세요", 22, weight="semibold")
-        title_row.Add(self.heading, 1, wx.ALIGN_CENTER_VERTICAL)
+        title_row.Add(self.heading, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, self.FromDIP(16))
+        # 시험을 주고받는 명령은 시험 이름 바로 옆에 둔다. 폴더 단위로 동작하며,
+        # 시나리오 CSV 명령은 시험시나리오 구역에 따로 있다.
+        commands = file_commands or {}
+        self.file_buttons = {
+            "import": button(self, "시험 가져오기", commands.get("import", lambda: None)),
+            "export": button(self, "시험 내보내기", commands.get("export", lambda: None)),
+        }
+        for key, control in self.file_buttons.items():
+            title_row.Add(control, 0, wx.ALIGN_CENTER_VERTICAL | (wx.LEFT if key != "import" else 0),
+                          self.FromDIP(8))
+        title_row.AddStretchSpacer()
         self.mode = chip(self, "조회 중", "waiting")
         title_row.Add(self.mode, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, self.FromDIP(12))
         root.Add(title_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, self.FromDIP(20))
@@ -34,6 +46,10 @@ class TestDetailsPane(ScrolledPanel):
         root.Add(self.basic_bar, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, self.FromDIP(20))
         self.basic = ParameterEditorPane(self, on_patch, label_value=True)
         root.Add(self.basic, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, self.FromDIP(20))
+        # 시나리오는 편집 모드와 무관하게 파일을 다루므로 기본 정보 바로 아래에 둔다.
+        self.scenario = ScenarioPane(self, commands.get("scenario_import", lambda: None),
+                                     commands.get("scenario_clear", lambda: None))
+        root.Add(self.scenario, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, self.FromDIP(20))
         self.spec = SpecificationPane(self, steps, on_patch, on_structure)
         root.Add(self.spec, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, self.FromDIP(20))
         self.advanced_toggle = button(self, "고급 설정 펼치기", self.toggle_advanced, align_left=True)
@@ -52,10 +68,16 @@ class TestDetailsPane(ScrolledPanel):
         self.Layout()
         self.FitInside()
 
-    def render(self, definition, changes, policy, errors, group_label=None):
+    def render(self, definition, changes, policy, errors, group_label=None,
+               scenario=None, scenario_enabled=True, files_enabled=True):
         valid = definition is not None
-        for control in (self.basic_bar, self.basic, self.spec, self.advanced_toggle, self.mode):
+        for control in (self.basic_bar, self.basic, self.spec, self.advanced_toggle, self.mode,
+                        self.scenario):
             control.Show(valid)
+        # 가져오기는 선택이 없어도 쓸 수 있어야 빈 시험목록을 채울 수 있다.
+        self.file_buttons["import"].Enable(files_enabled)
+        self.file_buttons["export"].Show(valid)
+        self.file_buttons["export"].Enable(files_enabled and valid and bool(definition.revision))
         self.GetSizer().Show(self.facts, valid, recursive=True)
         self.summary.Show(not valid)
         self.spec.set_advanced_shown(valid and self.expanded)
@@ -72,6 +94,7 @@ class TestDetailsPane(ScrolledPanel):
             self.fact_values["type"].SetToolTip("종류는 시험을 만든 뒤 바꿀 수 없습니다.")
             self.fact_values["revision"].SetLabel(str(definition.revision) if definition.revision else "저장 전")
             self.basic.render(self.basic_schemas, values, "", policy, errors)
+            self.scenario.render(scenario, scenario_enabled)
             self.spec.render(definition, values, policy, errors)
         self.Layout()
         self.FitInside()
@@ -91,4 +114,5 @@ class TestDetailsPane(ScrolledPanel):
 
     def dispose(self):
         self.basic.dispose()
+        self.scenario.dispose()
         self.spec.dispose()

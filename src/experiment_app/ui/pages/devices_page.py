@@ -20,7 +20,7 @@ class DevicesPage(wx.Panel):
                              ("A 영역", text(self, "속도, 시작점 거리", 14)),
                              ("B 영역", text(self, "횡방향, 종방향", 14)),
                              ("C 영역", text(self, "현재 속도, 누적 이동거리", 14)),
-                             ("기록", text(self, "화면 10 Hz, 최대 30초 재생, 원본 JSONL 저장", 14))):
+                             ("기록", text(self, "화면 10 Hz, 중지할 때까지 수집, 원본 JSONL 저장", 14))):
             facts.Add(text(self, label, 13, colour=MUTED), 0, wx.ALIGN_CENTER_VERTICAL)
             facts.Add(value, 1, wx.EXPAND)
         root.Add(facts, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, self.FromDIP(24))

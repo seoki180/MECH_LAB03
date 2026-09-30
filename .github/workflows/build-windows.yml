@@ -37,7 +37,7 @@ jobs:
           # 인코딩을 명시하지 않은 파일 입출력을 오류로 잡는다. 생략하면 로케일이
           # UTF-8인 개발 환경에서는 통과하고 Windows(cp1252)에서만 깨진다.
           PYTHONWARNDEFAULTENCODING: "1"
-        run: python -W error::EncodingWarning -m pytest tests/test_core.py tests/test_nmea.py tests/test_robot.py tests/test_startup.py -q
+        run: python -W error::EncodingWarning -m pytest tests/test_core.py tests/test_nmea.py tests/test_robot.py tests/test_startup.py tests/test_test_folders.py tests/test_acquisition.py -q
 
   build-windows:
     needs: test
@@ -134,7 +134,7 @@ jobs:
         shell: pwsh
         run: |
           $stage = "release\MECHLab"
-          New-Item -ItemType Directory -Force -Path "$stage\maps", "$stage\nmea" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$stage\maps", "$stage\nmea", "$stage\test" | Out-Null
           Copy-Item "dist\MECHLab.exe" $stage
           Copy-Item "packaging\배포_읽어보기.txt" "$stage\읽어보기.txt"
           # 빈 폴더는 zip에서 사라지므로 안내 파일을 하나씩 둔다.
@@ -142,6 +142,8 @@ jobs:
             "이 폴더에 .mbtiles 타일팩을 넣으면 앱이 지도 배경을 표시합니다. 파일이 없으면 좌표와 궤적만 표시합니다." -Encoding utf8
           Set-Content "$stage\nmea\여기에_NMEA_로그를_넣으세요.txt" `
             "재생할 .nmea 로그를 이 폴더에 넣으세요. 10km_log.nmea가 있으면 그 파일을 먼저 사용합니다." -Encoding utf8
+          Set-Content "$stage\test\여기에_시험을_넣으세요.txt" `
+            "시험목록마다 폴더를 만들고, 그 안에 시험마다 폴더를 하나씩 만드세요. 시험 폴더 안에는 test.json(설정)과 target.csv(시험시나리오)를 넣습니다. 예: test\10km 시험\급가속 A\test.json 과 target.csv. 비어 있으면 첫 실행 때 데모 시험이 만들어집니다." -Encoding utf8
           Compress-Archive -Path $stage -DestinationPath "release\MECHLab-windows.zip"
 
       - name: 아티팩트 업로드
