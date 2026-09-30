@@ -1,5 +1,5 @@
 import wx
-from wx.lib.scrolledpanel import ScrolledPanel
+from experiment_app.ui.components.wheel_scrolled_panel import WheelScrolledPanel
 from experiment_app.domain.session import State, ACTIVE, TERMINAL, LABELS
 from experiment_app.domain.test_definition import AppError
 from experiment_app.ui.theme import style, text, CONCRETE, MUTED
@@ -37,7 +37,7 @@ class ExperimentFrame(wx.Frame):
         self.robot_status = text(self, presenter.robot_status(), 13)
         strip.Add(self.robot_status, 1, wx.ALIGN_CENTER_VERTICAL)
         root.Add(strip, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, self.FromDIP(16))
-        self.body = ScrolledPanel(self)
+        self.body = WheelScrolledPanel(self)
         self.body.SetBackgroundColour(CONCRETE)
         self.body_sizer = wx.BoxSizer(wx.VERTICAL)
         self.sensors = {part: SensorPartPane(self.body, part, presenter.sessions.channels) for part in "BC"}
@@ -52,6 +52,7 @@ class ExperimentFrame(wx.Frame):
         self.showing_charts = False
         self.body.SetSizer(self.body_sizer)
         self.body.SetupScrolling(scroll_x=False, rate_y=16)
+        self.body.bind_wheel_children(exclude=(self.map, self.charts))
         root.Add(self.body, 1, wx.EXPAND)
         self.SetSizer(root)
         self.CreateStatusBar()

@@ -54,6 +54,19 @@ class ChartViewport:
             updated.extend((new_low, new_low + span))
         self.bounds = tuple(updated)
 
+    def pan(self, x_fraction, y_fraction):
+        """Drag the visible range by a fraction of its size, staying inside the data."""
+        if self.full is None or self.bounds is None:
+            return
+        updated = []
+        for start, fraction in ((0, x_fraction), (2, y_fraction)):
+            low, high = self.full[start:start + 2]
+            visible_low, visible_high = self.bounds[start:start + 2]
+            span = visible_high - visible_low
+            moved = max(low, min(high - span, visible_low - fraction * span))
+            updated.extend((moved, moved + span))
+        self.bounds = tuple(updated)
+
 
 def nice_step(span, target_count=5):
     """축 눈금 간격을 1·2·5·10… 중에서 고른다."""
@@ -79,11 +92,16 @@ class ChartView(wx.Panel):
         self.empty_text = "표시할 자료 없음"
         self.viewport = ChartViewport(None)
         self._gesture_start_bounds = None
+        self.drag = None
         self.on_zoom_changed: Callable[[bool], None] | None = None
         self.SetMinSize(self.FromDIP((240, 180)))
         self.Bind(wx.EVT_PAINT, self.paint)
         self.Bind(wx.EVT_SIZE, lambda event: (self.Refresh(False), event.Skip()))
         self.Bind(wx.EVT_MOUSEWHEEL, self.wheel)
+        self.Bind(wx.EVT_LEFT_DOWN, self.down)
+        self.Bind(wx.EVT_LEFT_UP, self.up)
+        self.Bind(wx.EVT_MOTION, self.motion)
+        self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, self.capture_lost)
         if self.EnableTouchEvents(wx.TOUCH_ZOOM_GESTURE):
             self.Bind(wx.EVT_GESTURE_ZOOM, self.pinch)
 
@@ -93,6 +111,9 @@ class ChartView(wx.Panel):
         self.empty_text = empty_text
         self.viewport = ChartViewport(self._data_bounds())
         self._gesture_start_bounds = None
+        if self.HasCapture():
+            self.ReleaseMouse()
+        self.drag = None
         self._notify_zoom()
         self.Refresh(False)
 
@@ -126,6 +147,9 @@ class ChartView(wx.Panel):
         return t0, t1, v0, v1
 
     def reset_zoom(self):
+        if self.HasCapture():
+            self.ReleaseMouse()
+        self.drag = None
         self.viewport.reset()
         self._gesture_start_bounds = None
         self._notify_zoom()
@@ -158,6 +182,34 @@ class ChartView(wx.Panel):
         self.zoom_at(event.GetZoomFactor(), event.GetPosition(), self._gesture_start_bounds)
         if event.IsGestureEnd():
             self._gesture_start_bounds = None
+
+    def down(self, event):
+        if self.bounds() is None or self.bounds() == self.viewport.full:
+            return
+        self.drag = event.GetPosition()
+        self.CaptureMouse()
+
+    def up(self, event):
+        if self.HasCapture():
+            self.ReleaseMouse()
+        self.drag = None
+
+    def motion(self, event):
+        if self.drag is None or not event.Dragging() or not event.LeftIsDown():
+            return
+        position = event.GetPosition()
+        width, height = self.GetClientSize()
+        plot_w = width - self.FromDIP(62)
+        plot_h = height - self.FromDIP(44)
+        if plot_w > 0 and plot_h > 0:
+            self.viewport.pan((position.x - self.drag.x) / plot_w,
+                              (position.y - self.drag.y) / plot_h)
+            self._notify_zoom()
+            self.Refresh(False)
+        self.drag = position
+
+    def capture_lost(self, event):
+        self.drag = None
 
     # ------------------------------------------------------------ 그리기
 
@@ -235,6 +287,9 @@ class ChartView(wx.Panel):
             dc.DrawLine(left, y, left + plot_w, y)
 
     def dispose(self):
+        if self.HasCapture():
+            self.ReleaseMouse()
+        self.drag = None
         self.series = ()
         self.viewport = ChartViewport(None)
         self._gesture_start_bounds = None

@@ -182,6 +182,14 @@ def later(action, delay=250):
 def start():
     check(frame.tests.details.IsShown(), "Tests detail visible")
     capture(frame, "main-1280")
+    details = frame.tests.details
+    check(details.GetVirtualSize().height > details.GetClientSize().height,
+          "Test details has overflowing content")
+    details.Scroll(0, 0)
+    spin_wheel(details.heading, -1)
+    check(details.GetViewStart()[1] > 0,
+          "First wheel over a child scrolls test details without dragging the scrollbar")
+    details.Scroll(0, 0)
     header = frame.header
     check(not header.title.IsShown() and not header.navigation, "Main navigation bar is removed")
     edit_button = header.buttons["edit"]

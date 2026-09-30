@@ -1,12 +1,12 @@
 import wx
-from wx.lib.scrolledpanel import ScrolledPanel
+from experiment_app.ui.components.wheel_scrolled_panel import WheelScrolledPanel
 from experiment_app.ui.theme import text, button, surface, section_bar, chip, set_chip, MUTED
 from .parameter_editor import ParameterEditorPane
 from .specification import SpecificationPane
 from .scenario import ScenarioPane
 
 
-class TestDetailsPane(ScrolledPanel):
+class TestDetailsPane(WheelScrolledPanel):
     def __init__(self, parent, fields, on_patch, on_structure, file_commands=None):
         super().__init__(parent)
         surface(self)
@@ -58,6 +58,7 @@ class TestDetailsPane(ScrolledPanel):
         self.expanded = False
         self.SetSizer(root)
         self.SetupScrolling(scroll_x=False, rate_y=16)
+        self.bind_wheel_children()
         self.render(None, {}, None, {})
 
     def toggle_advanced(self):
@@ -98,6 +99,7 @@ class TestDetailsPane(ScrolledPanel):
             self.spec.render(definition, values, policy, errors)
         self.Layout()
         self.FitInside()
+        self.bind_wheel_children()
 
     def update_draft(self, values, errors):
         self.basic.show_errors(errors)

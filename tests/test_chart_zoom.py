@@ -30,6 +30,21 @@ def test_pinch_uses_gesture_start_bounds_instead_of_multiplying_updates():
     assert viewport.bounds[1] - viewport.bounds[0] == pytest.approx(100 / 3)
 
 
+def test_pan_moves_both_axes_and_clamps_to_full_range():
+    viewport = ChartViewport((0.0, 100.0, -50.0, 50.0))
+    viewport.zoom(2.0, 0.5, 0.5)
+    assert viewport.bounds == pytest.approx((25.0, 75.0, -25.0, 25.0))
+    viewport.pan(0.2, 0.2)
+    assert viewport.bounds == pytest.approx((15.0, 65.0, -35.0, 15.0))
+    viewport.pan(10.0, 10.0)
+    assert viewport.bounds == pytest.approx((0.0, 50.0, -50.0, 0.0))
+    viewport.pan(-10.0, -10.0)
+    assert viewport.bounds == pytest.approx((50.0, 100.0, 0.0, 50.0))
+    viewport.reset()
+    viewport.pan(0.5, 0.5)
+    assert viewport.bounds == viewport.full
+
+
 def test_empty_chart_cannot_zoom():
     viewport = ChartViewport(None)
     viewport.zoom(2.0, 0.5, 0.5)

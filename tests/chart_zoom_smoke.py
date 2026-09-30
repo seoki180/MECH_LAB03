@@ -51,6 +51,20 @@ try:
     zoomed = speed.bounds()
     assert zoomed is not None and zoomed[1] - zoomed[0] < origin[1] - origin[0]
     assert deviation.bounds() == other
+    down = wx.MouseEvent(wx.wxEVT_LEFT_DOWN)
+    down.SetPosition(wx.Point(*center))
+    speed.GetEventHandler().ProcessEvent(down)
+    assert speed.HasCapture()
+    moved = wx.MouseEvent(wx.wxEVT_MOTION)
+    moved.SetLeftDown(True)
+    moved.SetPosition(wx.Point(center[0] + 40, center[1] + 30))
+    speed.GetEventHandler().ProcessEvent(moved)
+    panned = speed.bounds()
+    assert panned[0] < zoomed[0] and panned[2] < zoomed[2]
+    assert deviation.bounds() == other
+    up = wx.MouseEvent(wx.wxEVT_LEFT_UP)
+    speed.GetEventHandler().ProcessEvent(up)
+    assert not speed.HasCapture() and speed.drag is None
     wheel(speed, -20, center)
     assert speed.bounds() == origin
     pinch(speed, 2.0, center, start=True)

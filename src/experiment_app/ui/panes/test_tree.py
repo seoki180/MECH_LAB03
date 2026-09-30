@@ -1,5 +1,5 @@
 import wx
-from wx.lib.scrolledpanel import ScrolledPanel
+from experiment_app.ui.components.wheel_scrolled_panel import WheelScrolledPanel
 from experiment_app.ui.theme import surface, text, button, add, section_bar, font, input_control, MUTED
 
 
@@ -18,7 +18,7 @@ class TestTreePane(wx.Panel):
         input_control(self.search)
         self.search.Bind(wx.EVT_TEXT, lambda e: self._rows())
         add(root, self.search)
-        self.rows = ScrolledPanel(self)
+        self.rows = WheelScrolledPanel(self)
         surface(self.rows)
         self.rows.SetSizer(wx.BoxSizer(wx.VERTICAL))
         self.rows.SetupScrolling(scroll_x=False, rate_y=16)
@@ -71,6 +71,7 @@ class TestTreePane(wx.Panel):
         self.hint.SetLabel("검색을 지우면 순서를 바꿀 수 있습니다." if query else "선택한 시험을 같은 시험목록 안에서 옮깁니다.")
         self.rows.Layout()
         self.rows.FitInside()
+        self.rows.bind_wheel_children()
         self.rows.Thaw()
 
     def _toggle(self, group_id):
