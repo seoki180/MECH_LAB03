@@ -22,6 +22,13 @@ ASSET_TARGET = (Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
+def scenario_csv(tmp_path):
+    source = tmp_path / "scenario.csv"
+    source.write_text("time,target_v\n0,4.82E-06\n0.1,2\n", encoding="utf-8")
+    return source
+
+
+@pytest.fixture
 def services(tmp_path):
     main, experiment = build_services(tmp_path, duration=0.16)
     yield main, experiment
@@ -33,7 +40,9 @@ def services(tmp_path):
 # ---------------------------------------------------------------- 시나리오 CSV
 
 def test_asset_target_csv_parses_as_scenario():
-    """제공된 양식 파일(10km_target.csv)을 그대로 읽을 수 있어야 한다."""
+    """로컬에 제공된 양식 파일이 있으면 그대로 읽을 수 있어야 한다."""
+    if not ASSET_TARGET.is_file():
+        pytest.skip("저장소에서 제외된 참고 자료")
     points = parse_scenario_csv(ASSET_TARGET.read_text(encoding="utf-8-sig"), ASSET_TARGET.name)
     assert len(points) == 685
     assert points[0].time == 0.0
@@ -43,9 +52,15 @@ def test_asset_target_csv_parses_as_scenario():
     assert points[-1].time > points[0].time
 
 
-def test_scenario_round_trip_keeps_values():
-    points = parse_scenario_csv(ASSET_TARGET.read_text(encoding="utf-8-sig"))
+def test_scenario_round_trip_keeps_values(scenario_csv):
+    points = parse_scenario_csv(scenario_csv.read_text(encoding="utf-8-sig"))
     assert parse_scenario_csv(format_scenario_csv(points)) == points
+
+
+def test_scenario_csv_supports_bom_crlf_and_exponents():
+    points = parse_scenario_csv("\ufefftime,target_v\r\n0,4.82E-06\r\n0.1,2\r\n")
+    assert points[0].target_v == pytest.approx(4.82e-06)
+    assert points[1].time == pytest.approx(0.1)
 
 
 @pytest.mark.parametrize("body", [
@@ -272,11 +287,11 @@ def test_flat_layout_migrates_into_profile_folders(tmp_path):
     assert len(repository.scenario(loaded.id)) == len(demo_scenario())
 
 
-def test_set_and_clear_scenario(services, tmp_path):
+def test_set_and_clear_scenario(services, scenario_csv):
     main, _ = services
     service = main.service
-    points = service.set_scenario("demo-0", ASSET_TARGET)
-    assert len(points) == 685
+    points = service.set_scenario("demo-0", scenario_csv)
+    assert len(points) == 2
     assert service.scenario("demo-0") == points
     service.clear_scenario("demo-0")
     assert service.scenario("demo-0") == ()
@@ -284,12 +299,12 @@ def test_set_and_clear_scenario(services, tmp_path):
 
 # ------------------------------------------------------------------- 실행 연결
 
-def test_prepare_fixes_the_scenario_and_ignores_later_edits(services):
+def test_prepare_fixes_the_scenario_and_ignores_later_edits(services, scenario_csv):
     main, experiment = services
     session = experiment.sessions.prepare("demo-0", 1)
     original = session.snapshot.scenario
     assert original == demo_scenario()
-    main.service.set_scenario("demo-0", ASSET_TARGET)
+    main.service.set_scenario("demo-0", scenario_csv)
     assert session.snapshot.scenario == original
 
 
