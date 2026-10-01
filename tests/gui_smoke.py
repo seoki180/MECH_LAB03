@@ -87,6 +87,30 @@ def spin_wheel(view, notches, position=(10, 10)):
     view.GetEventHandler().ProcessEvent(event)
 
 
+def pan_gesture(view, dy, position=(10, 10), start=True, end=False):
+    event = wx.PanGestureEvent(view.GetId())
+    event.SetEventObject(view)
+    event.SetGestureStart(start)
+    event.SetGestureEnd(end)
+    event.SetDelta(wx.Point(0, dy))
+    event.SetPosition(wx.Point(*position))
+    view.GetEventHandler().ProcessEvent(event)
+
+
+def finger_drag(view, dy, position=(10, 10)):
+    """손가락으로 컨트롤을 눌러 끌 때 들어오는 마우스 흉내 입력."""
+    down = wx.MouseEvent(wx.wxEVT_LEFT_DOWN)
+    down.SetPosition(wx.Point(*position))
+    view.GetEventHandler().ProcessEvent(down)
+    motion = wx.MouseEvent(wx.wxEVT_MOTION)
+    motion.SetLeftDown(True)
+    motion.SetPosition(wx.Point(position[0], position[1] + dy))
+    view.GetEventHandler().ProcessEvent(motion)
+    up = wx.MouseEvent(wx.wxEVT_LEFT_UP)
+    up.SetPosition(wx.Point(position[0], position[1] + dy))
+    view.GetEventHandler().ProcessEvent(up)
+
+
 def pinch(view, factor, position=(10, 10), start=True, end=True):
     event = wx.ZoomGestureEvent()
     event.SetEventObject(view)
@@ -189,6 +213,29 @@ def start():
     spin_wheel(details.heading, -1)
     check(details.GetViewStart()[1] > 0,
           "First wheel over a child scrolls test details without dragging the scrollbar")
+    details.Scroll(0, 0)
+    pan_gesture(details.advanced_toggle, -60)
+    check(details.GetViewStart()[1] > 0,
+          "Touch pan gesture over a child scrolls test details")
+    details.Scroll(0, 0)
+    pan_gesture(details, -60)
+    check(details.GetViewStart()[1] > 0, "Touch pan gesture over the panel itself scrolls it")
+    details.Scroll(0, 0)
+    finger_drag(details.heading, -60)
+    check(details.GetViewStart()[1] > 0,
+          "Finger drag over a label that cannot take gestures still scrolls")
+    details.Scroll(0, 0)
+    expanded_before = details.expanded
+    finger_drag(details.advanced_toggle, -60)
+    check(details.GetViewStart()[1] > 0 and details.expanded == expanded_before,
+          "Finger drag on a button scrolls instead of activating it")
+    check(details.advanced_toggle.up and not details.advanced_toggle.HasCapture(),
+          "Button press state is cancelled when the drag becomes a scroll")
+    details.Scroll(0, 0)
+    tapped = details.expanded
+    details.advanced_toggle.Notify()
+    check(details.expanded != tapped, "A tap without dragging still activates the button")
+    details.advanced_toggle.Notify()
     details.Scroll(0, 0)
     header = frame.header
     check(not header.title.IsShown() and not header.navigation, "Main navigation bar is removed")

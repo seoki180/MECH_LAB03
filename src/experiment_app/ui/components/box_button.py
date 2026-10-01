@@ -132,6 +132,13 @@ class BoxButton(GenButton):
         if activate:
             self.Notify()
 
+    def cancel_press(self):
+        """끌기가 스크롤로 바뀔 때 눌림 표시만 되돌린다. 콜백은 실행하지 않는다."""
+        self.key_held = None
+        if not self.up:
+            self.up = True
+            self.Refresh(False)
+
     def OnKeyDown(self, event):
         key = event.GetKeyCode()
         if self.hasFocus and self.IsEnabled() and key in (wx.WXK_SPACE, wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
