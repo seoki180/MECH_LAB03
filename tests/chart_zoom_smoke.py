@@ -60,7 +60,8 @@ try:
     moved.SetPosition(wx.Point(center[0] + 40, center[1] + 30))
     speed.GetEventHandler().ProcessEvent(moved)
     panned = speed.bounds()
-    assert panned[0] < zoomed[0] and panned[2] < zoomed[2]
+    # 아래로 끌면 그림이 따라 내려가 더 높은 값 구간이 보인다.
+    assert panned[0] < zoomed[0] and panned[2] > zoomed[2]
     assert deviation.bounds() == other
     up = wx.MouseEvent(wx.wxEVT_LEFT_UP)
     speed.GetEventHandler().ProcessEvent(up)

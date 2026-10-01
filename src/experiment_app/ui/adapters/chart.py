@@ -202,8 +202,10 @@ class ChartView(wx.Panel):
         plot_w = width - self.FromDIP(62)
         plot_h = height - self.FromDIP(44)
         if plot_w > 0 and plot_h > 0:
+            # 세로 화면 좌표는 아래로 갈수록 커지고 값 축은 위로 갈수록 커진다.
+            # 부호를 뒤집지 않으면 끌어올린 방향과 반대로 움직인다.
             self.viewport.pan((position.x - self.drag.x) / plot_w,
-                              (position.y - self.drag.y) / plot_h)
+                              -(position.y - self.drag.y) / plot_h)
             self._notify_zoom()
             self.Refresh(False)
         self.drag = position
