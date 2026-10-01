@@ -193,6 +193,84 @@ def check_map():
           "Vector tile pack is refused at load with a reason instead of being decoded")
 
 
+def check_experiment_touch_scroll(exp):
+    """실험 본문도 손가락으로 스크롤되는지. 그림판만 자기 제스처를 쓴다."""
+    body = exp.body
+    unbound = []
+
+    def walk(window, path="body"):
+        for child in window.GetChildren():
+            name = f"{path}/{type(child).__name__}"
+            if getattr(child, "_wheel_scroll_owner", None) is not body:
+                unbound.append(name)
+            walk(child, name)
+
+    walk(body)
+    check(sorted(unbound) == ["body/GpsMapPane/Panel/TileMapView",
+                              "body/ResultChartsPane/ChartCard/ChartView",
+                              "body/ResultChartsPane/ChartCard/ChartView"],
+          "Only the map and chart canvases keep their own gestures in the experiment body")
+    check(body.GetVirtualSize().height > body.GetClientSize().height,
+          "Experiment body has overflowing content to scroll")
+
+    tile = exp.sensors["B"].cards["B.0"]
+    for name, target in (("the body", body), ("a sensor pane", exp.sensors["B"]),
+                         ("a metric card", tile), ("the map pane", exp.map),
+                         ("a map header button", exp.map.zoom_buttons[0])):
+        body.Scroll(0, 0)
+        pan_gesture(target, -60)
+        check(body.GetViewStart()[1] > 0, f"Touch pan over {name} scrolls the experiment body")
+    for name, target in (("a metric value label", tile.value),
+                         ("the map coordinate label", exp.map.coordinates),
+                         ("a map header button", exp.map.zoom_buttons[0])):
+        body.Scroll(0, 0)
+        finger_drag(target, -60)
+        check(body.GetViewStart()[1] > 0, f"Finger drag over {name} scrolls the experiment body")
+    body.Scroll(0, 0)
+    before = exp.map.map.center
+    check(exp.map.map.center == before, "Dragging outside the map canvas does not move the map")
+
+
+def check_chart_touch_scroll(exp):
+    """결과 그래프 화면. 확대 전 그림판 끌기는 본문 스크롤로 넘어간다."""
+    body = exp.body
+    card = exp.charts.speed
+    # 그래프 둘만 남으면 1024 DIP 창에는 다 들어가 스크롤할 것이 없다. 본문이 넘치는
+    # 좁은 창으로 줄여 실제 스크롤 경로를 지나간다.
+    restore = exp.GetClientSize()
+    exp.SetClientSize(exp.FromDIP((700, 560)))
+    exp.Layout()
+    body.FitInside()
+    wx.Yield()
+    check(body.GetVirtualSize().height > body.GetClientSize().height,
+          "Chart body overflows once the window is narrowed")
+    for name, target in (("a chart card", card), ("the reset button", card.reset_button)):
+        body.Scroll(0, 0)
+        pan_gesture(target, -60)
+        check(body.GetViewStart()[1] > 0, f"Touch pan over {name} scrolls the chart body")
+    body.Scroll(0, 0)
+    finger_drag(card.axis, -60)
+    check(body.GetViewStart()[1] > 0, "Finger drag over the chart axis label scrolls the chart body")
+
+    full = card.chart.bounds()
+    body.Scroll(0, 0)
+    finger_drag(card.chart, -60)
+    check(body.GetViewStart()[1] > 0 and card.chart.bounds() == full,
+          "Drag on an unzoomed chart scrolls the body instead of being swallowed")
+    card.chart.zoom_at(4.0, wx.Point(100, 60))
+    zoomed = card.chart.bounds()
+    body.Scroll(0, 0)
+    finger_drag(card.chart, -60)
+    check(body.GetViewStart()[1] == 0 and card.chart.bounds() != zoomed,
+          "Drag on a zoomed chart pans the chart and leaves the body still")
+    card.chart.reset_zoom()
+    body.Scroll(0, 0)
+    exp.SetClientSize(restore)
+    exp.Layout()
+    body.FitInside()
+    wx.Yield()
+
+
 def later(action, delay=250):
     def guarded():
         try:
@@ -456,6 +534,7 @@ def narrow_experiment():
                   and exp.GetClientRect().Contains(exp.ScreenToClient(card.GetScreenRect().GetBottomRight())),
                   "Metric card remains inside 1024 DIP client area")
     capture(exp, "experiment-1024")
+    check_experiment_touch_scroll(exp)
     exp.stop()
     later(stopped)
 
@@ -471,6 +550,7 @@ def stopped():
     exp.toggle_charts()
     check(exp.showing_charts and exp.header.buttons["charts"].GetLabel() == "측정 화면",
           "Result chart replaces the measurement body")
+    check_chart_touch_scroll(exp)
     exp.toggle_charts()
     check(not exp.showing_charts and exp.header.buttons["charts"].GetLabel() == "결과 그래프",
           "Result chart returns to the measurement body")

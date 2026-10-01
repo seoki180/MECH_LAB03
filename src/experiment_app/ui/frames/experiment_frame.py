@@ -52,7 +52,7 @@ class ExperimentFrame(wx.Frame):
         self.showing_charts = False
         self.body.SetSizer(self.body_sizer)
         self.body.SetupScrolling(scroll_x=False, rate_y=16)
-        self.body.bind_wheel_children(exclude=(self.map, self.charts))
+        self.bind_body_scroll()
         root.Add(self.body, 1, wx.EXPAND)
         self.SetSizer(root)
         self.CreateStatusBar()
@@ -62,6 +62,23 @@ class ExperimentFrame(wx.Frame):
         self.Bind(wx.EVT_SIZE, self.resize)
         self.timer.Start(100)
         self.tick()
+
+    def bind_body_scroll(self):
+        """본문 스크롤 입력을 다시 연결한다.
+
+        제스처를 스스로 쓰는 것은 지도 그림판과 그래프 그림판뿐이다. 그 둘을
+        담은 pane 전체를 빼면 지도 머리줄 버튼·좌표, 그래프 제목·범례·'전체 보기'
+        위에서는 손가락이 전혀 먹지 않는다. 그림판만 뺀다.
+        """
+        charts = (self.charts.speed.chart, self.charts.deviation.chart)
+        self.body.bind_wheel_children(exclude=(self.map.map,) + charts)
+        for chart in charts:
+            # 확대 전 그래프는 끌어도 움직일 수 없다. 그 끌기는 본문 스크롤로 쓴다.
+            chart.on_spare_drag = self.scroll_body_by
+
+    def scroll_body_by(self, dy):
+        """그림판이 쓰지 않은 세로 끌기만큼 본문을 움직인다."""
+        self.body.scroll_by_pixels(-dy)
 
     def start(self):
         self.scenario = self.presenter.sessions.scenario
@@ -98,6 +115,8 @@ class ExperimentFrame(wx.Frame):
             pane.Show(not showing)
         self.charts.Show(showing)
         self.header.buttons["charts"].SetLabel("측정 화면" if showing else "결과 그래프")
+        # 범례는 render마다 새 위젯으로 다시 만든다. 새 자식에 스크롤 입력을 연결한다.
+        self.bind_body_scroll()
         self.body.Layout()
         self.body.FitInside()
         self.Layout()

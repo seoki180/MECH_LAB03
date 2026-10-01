@@ -94,6 +94,9 @@ class ChartView(wx.Panel):
         self._gesture_start_bounds = None
         self.drag = None
         self.on_zoom_changed: Callable[[bool], None] | None = None
+        # 확대되지 않아 그래프가 움직일 수 없을 때의 세로 끌기를 넘길 곳.
+        # 넘기지 않으면 그래프 위에서는 본문이 스크롤되지 않는 죽은 영역이 된다.
+        self.on_spare_drag: Callable[[int], None] | None = None
         self.SetMinSize(self.FromDIP((240, 180)))
         self.Bind(wx.EVT_PAINT, self.paint)
         self.Bind(wx.EVT_SIZE, lambda event: (self.Refresh(False), event.Skip()))
@@ -183,9 +186,12 @@ class ChartView(wx.Panel):
         if event.IsGestureEnd():
             self._gesture_start_bounds = None
 
+    def can_move(self):
+        """확대되어 보이는 범위를 끌어 움직일 수 있는 상태인지."""
+        return self.bounds() is not None and self.bounds() != self.viewport.full
+
     def down(self, event):
-        if self.bounds() is None or self.bounds() == self.viewport.full:
-            return
+        # 확대 전에도 끌기를 받아둔다. 그래프가 못 움직이면 본문 스크롤로 넘긴다.
         self.drag = event.GetPosition()
         self.CaptureMouse()
 
@@ -198,6 +204,11 @@ class ChartView(wx.Panel):
         if self.drag is None or not event.Dragging() or not event.LeftIsDown():
             return
         position = event.GetPosition()
+        if not self.can_move():
+            if self.on_spare_drag:
+                self.on_spare_drag(position.y - self.drag.y)
+            self.drag = position
+            return
         width, height = self.GetClientSize()
         plot_w = width - self.FromDIP(62)
         plot_h = height - self.FromDIP(44)
@@ -296,3 +307,4 @@ class ChartView(wx.Panel):
         self.viewport = ChartViewport(None)
         self._gesture_start_bounds = None
         self.on_zoom_changed = None
+        self.on_spare_drag = None
