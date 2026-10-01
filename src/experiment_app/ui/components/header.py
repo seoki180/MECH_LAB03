@@ -56,6 +56,9 @@ class Header(wx.Panel):
         self.demo.label.SetForegroundColour(WARN)
         self.state = chip(self, "준비", "idle")
         self.clock = text(self, "", 28, colour=ON_GRAPHITE, weight="bold")
+        self.clock.SetWindowStyleFlag(wx.ALIGN_RIGHT | wx.ST_NO_AUTORESIZE)
+        digit = max("0123456789", key=lambda value: self.clock.GetTextExtent(value).width)
+        self.clock.SetMinSize(self.clock.GetTextExtent(f"{digit * 2}:{digit * 2}"))
         status.Add(self.demo, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, self.FromDIP(6))
         status.Add(self.state, 0, wx.ALIGN_CENTER_VERTICAL)
         status.Add(self.clock, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, self.FromDIP(16))
@@ -82,9 +85,17 @@ class Header(wx.Panel):
         # Keep the demo tag readable on its graphite chip after any recolour.
         self.demo.label.SetForegroundColour(WARN)
         shown = clock is not None
-        if self.clock.IsShown() != shown or (shown and self.clock.GetLabel() != clock):
-            self.clock.SetLabel(clock or "")
+        layout_changed = self.clock.IsShown() != shown
+        if shown and self.clock.GetLabel() != clock:
+            # Reserve normal MM:SS width; grow only for longer elapsed times.
+            extent = self.clock.GetTextExtent(clock)
+            if extent.width > self.clock.GetMinSize().width:
+                self.clock.SetMinSize(extent)
+                layout_changed = True
+            self.clock.SetLabel(clock)
+        if self.clock.IsShown() != shown:
             self.clock.Show(shown)
+        if layout_changed:
             self.Layout()
         for key, widget in self.navigation.items():
             widget.SetSelected(key == active)

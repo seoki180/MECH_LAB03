@@ -600,6 +600,23 @@ def running():
     capture(frame.experiment, "experiment-1280")
     check_map()
     exp = frame.experiment
+    assert exp is not None
+    from unittest.mock import patch
+    header = exp.header
+    header.render("측정 중", "active", "00:08")
+    positions = {key: button.GetRect() for key, button in header.buttons.items()}
+    with patch.object(header, "Layout", wraps=header.Layout) as layout, \
+            patch.object(header.state, "Refresh", wraps=header.state.Refresh) as refresh:
+        for clock in ("00:09", "00:10", "01:00", "99:59"):
+            header.render("측정 중", "active", clock)
+        check(layout.call_count == 0, "Clock ticks do not relayout the header")
+        check(refresh.call_count == 0, "Unchanged status chip does not request repaint")
+    check(all(button.GetRect() == positions[key] for key, button in header.buttons.items()),
+          "Clock updates preserve toolbar button geometry")
+    header.render("측정 중", "active", "100:00")
+    check(header.clock.GetSize().width >= header.clock.GetTextExtent("100:00").width,
+          "Clock grows for elapsed times beyond 99 minutes")
+    exp.tick()
     models = experiment.metrics(experiment.telemetry.snapshot())
     cards = {channel: card for pane in exp.sensors.values() for channel, card in pane.cards.items()}
     check(list(cards) == ["B.0", "B.1", "C.0", "C.1"], "Four metric cards appear in row order")

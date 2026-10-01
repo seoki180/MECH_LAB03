@@ -234,10 +234,17 @@ def chip(parent, label, tone="idle", size=13):
 def set_chip(panel, label, tone):
     fill, colour = TONES[tone]
     changed = panel.label.GetLabel() != label
-    panel.SetBackgroundColour(fill)
-    panel.label.SetBackgroundColour(fill)
-    panel.label.SetForegroundColour(colour)
-    panel.label.SetLabel(label)
+    recoloured = False
+    for window, getter, setter, value in (
+        (panel, "GetBackgroundColour", "SetBackgroundColour", fill),
+        (panel.label, "GetBackgroundColour", "SetBackgroundColour", fill),
+        (panel.label, "GetForegroundColour", "SetForegroundColour", colour),
+    ):
+        if getattr(window, getter)() != wx.Colour(value):
+            getattr(window, setter)(value)
+            recoloured = True
     if changed:
+        panel.label.SetLabel(label)
         panel.GetParent().Layout()
-    panel.Refresh()
+    if changed or recoloured:
+        panel.Refresh(False)

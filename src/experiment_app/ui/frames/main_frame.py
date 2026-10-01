@@ -13,6 +13,8 @@ from .experiment_frame import ExperimentFrame
 class MainFrame(wx.Frame):
     def __init__(self, presenter, experiment_presenter, clipboard, tiles, fields, scenarios):
         super().__init__(None, title="MECHLab 실험 관리 (데모)")
+        if wx.Platform == "__WXMSW__":
+            self.SetDoubleBuffered(True)
         self.presenter, self.experiment_presenter, self.clipboard = presenter, experiment_presenter, clipboard
         self.tiles = tiles
         self.repository = presenter.service.repository

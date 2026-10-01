@@ -15,6 +15,8 @@ TONES = {State.STARTING: "active", State.RUNNING: "active", State.STOPPING: "act
 class ExperimentFrame(wx.Frame):
     def __init__(self, parent, presenter, tiles, on_closed):
         super().__init__(parent, title="MECHLab 실험 (데모)")
+        if wx.Platform == "__WXMSW__":
+            self.SetDoubleBuffered(True)
         self.presenter = presenter
         self.on_closed = on_closed
         self.closing, self.disposed = False, False
