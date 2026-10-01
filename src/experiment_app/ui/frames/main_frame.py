@@ -36,7 +36,7 @@ class MainFrame(wx.Frame):
             ("settings", "설정", self.open_settings, False),
         ), compact=True, status_chips=False)
         root.Add(self.header, 0, wx.EXPAND)
-        self.tests = TestsPage(self, fields, self.select, self.reorder, self.patch, self.structure,
+        self.tests = TestsPage(self, fields, self.select, self.reorder, self.patch,
                                {"import": self.import_test, "export": self.export_test,
                                 "scenario_import": self.import_scenario,
                                 "scenario_clear": self.clear_scenario})
@@ -198,13 +198,6 @@ class MainFrame(wx.Frame):
         self.presenter.edit(path, value)
         self.tests.details.update_draft({**self.presenter.definition.fields(), **self.presenter.changes}, self.presenter.errors)
         self.tick()
-
-    def structure(self, operation, step_id):
-        try:
-            self.presenter.structure(operation, step_id)
-            self.render()
-        except AppError as error:
-            self.error(error)
 
     def guard_dirty(self, proceed):
         if self.presenter.busy:

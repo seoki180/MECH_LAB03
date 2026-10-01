@@ -3,8 +3,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from experiment_app.demo.fixtures import (schemas, CHANNELS,
-                                          BASIC_FIELDS, STEP_FIELDS, SCENARIOS)
+from experiment_app.demo.fixtures import schemas, CHANNELS, BASIC_FIELDS, SCENARIOS
 from experiment_app.infrastructure.test_folders import FolderTestRepository
 from experiment_app.infrastructure.results import LocalResultRepository
 from experiment_app.infrastructure.sources import FakeSensorSource, FakeGpsSource, SystemClock
@@ -254,7 +253,7 @@ def run():
     app = wx.App(False)
     load_fonts()
     frame = MainFrame(main_presenter, experiment_presenter, WxClipboard(), tiles,
-                      (BASIC_FIELDS, STEP_FIELDS), SCENARIOS)
+                      BASIC_FIELDS, SCENARIOS)
     frame.Show()
     app.MainLoop()
     tiles.close()

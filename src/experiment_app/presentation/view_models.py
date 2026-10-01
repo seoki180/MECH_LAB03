@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from experiment_app.domain.telemetry import effective_quality
 
 
@@ -21,6 +22,24 @@ def metric_model(label, unit, sample, now, live=True):
         quality = "종료 시 값"
     value = "—" if sample.value is None else f"{sample.value:.2f}"
     return MetricViewModel(label, value, unit, quality, sample.received_time_utc[11:19] + " UTC", age)
+
+
+def format_created(created_utc):
+    """생성일자를 사람이 읽는 현지 시각으로. 값이 없으면 대시를 돌려준다.
+
+    저장은 타임존이 있는 UTC이고 표시만 현지 시각으로 바꾼다. 비어 있는 것을
+    현재 시각으로 꾸미지 않는다.
+    """
+    if not created_utc:
+        return "—"
+    try:
+        moment = datetime.fromisoformat(created_utc)
+    except ValueError:
+        # 사람이 손으로 고친 값. 읽은 그대로 보여주고 해석하지 않는다.
+        return created_utc
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 @dataclass(frozen=True)

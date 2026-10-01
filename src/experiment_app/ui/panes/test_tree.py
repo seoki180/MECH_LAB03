@@ -14,7 +14,7 @@ class TestTreePane(wx.Panel):
         root.Add(section_bar(self, "시험목록"), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, self.FromDIP(12))
         self.search = wx.SearchCtrl(self)
         surface(self.search)
-        self.search.SetDescriptiveText("이름이나 종류로 검색")
+        self.search.SetDescriptiveText("이름으로 검색")
         input_control(self.search)
         self.search.Bind(wx.EVT_TEXT, lambda e: self._rows())
         add(root, self.search)
@@ -43,7 +43,7 @@ class TestTreePane(wx.Panel):
         query = self.search.GetValue().casefold().strip()
         for group_id, name in self.groups.items():
             tests = [t for t in self.definitions if t.group_id == group_id and
-                     (query in t.name.casefold() or query in t.type_id.casefold())]
+                     query in t.name.casefold()]
             if query and not tests:
                 continue
             row = wx.BoxSizer(wx.HORIZONTAL)

@@ -97,7 +97,7 @@ def test_each_test_is_one_profile_folder(services, tmp_path):
         # 안쪽 이름은 시험 이름과 무관하게 고정이다.
         assert sorted(p.name for p in folder.iterdir()) == [SCENARIO_FILE, TEST_FILE]
         body = json.loads((folder / TEST_FILE).read_text(encoding="utf-8"))
-        assert body["name"] == definition.name and body["schema_version"] == 3
+        assert body["name"] == definition.name and body["schema_version"] == 4
 
 
 def test_rename_moves_the_whole_profile_folder(services, tmp_path):

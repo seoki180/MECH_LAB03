@@ -1,8 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
-from uuid import uuid4
-from experiment_app.domain.test_definition import (AppError, FieldPatch, new_definition,
-                                                   new_spec_item)
+from experiment_app.domain.test_definition import AppError, FieldPatch, new_definition
 from .view_models import scenario_model
 
 
@@ -13,7 +10,6 @@ class MainPresenter:
         self.definition = None
         self.changes = {}
         self.errors = {}
-        self.structure_dirty = False
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mechlab-storage")
         self.pending = None
         self.editing = False
@@ -29,7 +25,7 @@ class MainPresenter:
 
     @property
     def dirty(self):
-        return self.definition is not None and (bool(self.changes) or self.structure_dirty or self.definition.revision == 0)
+        return self.definition is not None and (bool(self.changes) or self.definition.revision == 0)
 
     def begin_edit(self):
         if self.definition is not None and not self.busy and not self.editing:
@@ -45,13 +41,13 @@ class MainPresenter:
     def cancel_edit(self):
         if self.editing and not self.busy:
             self.definition = self.edit_baseline
-            self.changes, self.errors, self.structure_dirty = {}, {}, False
+            self.changes, self.errors = {}, {}
             self.end_edit()
 
     def select(self, test_id):
         self.end_edit()
         self.definition = self.service.repository.get(test_id) if test_id else None
-        self.changes, self.errors, self.structure_dirty = {}, {}, False
+        self.changes, self.errors = {}, {}
         self.refresh_scenario()
 
     def refresh_scenario(self):
@@ -120,33 +116,8 @@ class MainPresenter:
         # 새 시험은 어떤 값도 미리 채우지 않는다. 복제만 원본 값을 물려받는다.
         self.definition = (self.service.duplicate(source, group_id) if duplicate and source is not None
                            else new_definition(group_id))
-        self.changes, self.errors, self.structure_dirty = {}, {}, False
+        self.changes, self.errors = {}, {}
         self.scenario = None
-
-    def structure(self, operation, step_id):
-        if self.definition is None or self.busy or not self.editing:
-            return
-        if self.service.policy_provider(self.definition).context != "full":
-            raise AppError("VALIDATION_FAILED", "단계 편집이 잠겨 있습니다.")
-        steps = list(self.definition.spec_items)
-        index = next((i for i, s in enumerate(steps) if s.id == step_id), 0)
-        if operation in {"add", "duplicate"}:
-            if operation == "duplicate":
-                source = replace(steps[index], id=uuid4().hex, name=f"단계 {len(steps) + 1}")
-            else:
-                # 추가한 단계는 빈 값으로 둔다. 다른 단계의 값을 물려주지 않는다.
-                source = new_spec_item(f"단계 {len(steps) + 1}")
-            steps.insert(index + 1, source)
-        elif operation == "delete" and len(steps) > 1:
-            removed = steps.pop(index)
-            self.changes = {k: v for k, v in self.changes.items() if not k.startswith(f"spec/{removed.id}/")}
-            self.errors = {k: v for k, v in self.errors.items() if not k.startswith(f"spec/{removed.id}/")}
-        elif operation in {"up", "down"}:
-            target = index + (-1 if operation == "up" else 1)
-            if 0 <= target < len(steps):
-                steps[index], steps[target] = steps[target], steps[index]
-        self.definition = replace(self.definition, spec_items=tuple(steps))
-        self.structure_dirty = True
 
     def save(self, callback):
         if self.busy or self.definition is None:
@@ -170,9 +141,6 @@ class MainPresenter:
                 if scenario_source is not None and scenario_source.is_file():
                     self.service.set_scenario(saved.id, scenario_source)
                 return saved
-            if self.structure_dirty:
-                parsed = self.service.validate(definition, changes)
-                return self.service.save_structure(definition.patched(parsed), definition.revision, require_edit=True)
             return self.service.save_patch(FieldPatch(definition.id, definition.revision, changes), require_edit=True)
         self.submit(action, callback, saved=True)
 
@@ -193,7 +161,7 @@ class MainPresenter:
         if saved:
             self.end_edit()
             self.definition = result
-            self.changes, self.errors, self.structure_dirty = {}, {}, False
+            self.changes, self.errors = {}, {}
             self.scenario_source = None
             self.refresh_scenario()
         callback(result, None)

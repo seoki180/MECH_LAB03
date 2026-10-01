@@ -2,7 +2,7 @@ from dataclasses import replace
 from copy import deepcopy
 from uuid import uuid4
 from experiment_app.domain.edit_policy import EditPolicy
-from experiment_app.domain.test_definition import AppError
+from experiment_app.domain.test_definition import AppError, utc_now
 
 
 class TestService:
@@ -51,24 +51,13 @@ class TestService:
         return self.repository.save(definition.patched(changes), 0)
 
     def duplicate(self, definition, group_id=None):
+        # 복제는 새 시험이므로 생성일자도 새로 찍는다. 원본의 값만 물려받는다.
         return replace(definition, id=uuid4().hex, revision=0,
                        group_id=group_id or definition.group_id, name=definition.name + " 복사",
-                       spec_items=tuple(replace(s, id=uuid4().hex) for s in definition.spec_items),
+                       created_utc=utc_now(),
                        experiment_data=deepcopy(definition.experiment_data),
                        ar_trapezoidal_step=deepcopy(definition.ar_trapezoidal_step),
                        pf_straight_line=deepcopy(definition.pf_straight_line))
-
-    def save_structure(self, definition, expected_revision, *, require_edit=False):
-        if require_edit:
-            self.validate_edit(definition, {})
-        current = self.repository.get(definition.id)
-        policy = self.policy_provider(current)
-        if policy.context != "full":
-            raise AppError("VALIDATION_FAILED", "단계 구조는 전체 편집 정책에서만 변경할 수 있습니다.")
-        if not definition.spec_items:
-            raise AppError("VALIDATION_FAILED", "최소 한 단계가 필요합니다.")
-        self.validate(definition, {k: v for k, v in definition.fields().items() if k != "type_id"})
-        return self.repository.save(definition, expected_revision)
 
     # -------------------------------------------------- 시험 파일과 시험시나리오
 

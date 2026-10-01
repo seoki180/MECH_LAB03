@@ -9,7 +9,7 @@ class EditPolicy:
 
     @classmethod
     def full(cls, definition):
-        return cls("full", frozenset(definition.fields()) - {"type_id"})
+        return cls("full", frozenset(definition.fields()))
 
     @classmethod
     def readonly(cls):

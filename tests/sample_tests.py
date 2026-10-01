@@ -8,7 +8,7 @@ from copy import deepcopy
 import json
 
 from experiment_app.domain.scenario import ScenarioPoint, format_scenario_csv
-from experiment_app.domain.test_definition import SpecItem, TestDefinition
+from experiment_app.domain.test_definition import TestDefinition
 from experiment_app.infrastructure.test_folders import SCENARIO_FILE, SCHEMA_VERSION, TEST_FILE
 
 # 예전 DEFAULT_EXPERIMENT_DATA. 값이 채워진 시험을 흉내내는 테스트 입력이다.
@@ -19,6 +19,7 @@ SAMPLE_EXPERIMENT_DATA = {
     "zero_brake_angle": -14,
 }
 GROUPS = ("시험목록 A · 데모", "시험목록 B · 데모")
+SAMPLE_CREATED = "2026-01-02T03:04:05+00:00"
 # 테스트용 시험시나리오 길이와 간격.
 SCENARIO_SECONDS = 30.0
 SCENARIO_STEP = 0.1
@@ -35,15 +36,10 @@ def sample_scenario():
 
 def sample_definitions():
     """demo-0 … demo-5. 앞 세 개가 첫 시험목록, 나머지가 두 번째다."""
-    definitions = []
-    for index in range(6):
-        specs = tuple(SpecItem(f"step-{index}-{i}", f"단계 {i + 1}",
-                               (("target", 10.0 * (i + 1)), ("duration", 10.0), ("enabled", True)))
-                      for i in range(3))
-        definitions.append(TestDefinition(f"demo-{index}", GROUPS[0 if index < 3 else 1],
-                                          1, "demo", f"데모 시험 {index + 1:02}", 1, specs,
-                                          experiment_data=deepcopy(SAMPLE_EXPERIMENT_DATA)))
-    return definitions
+    return [TestDefinition(f"demo-{index}", GROUPS[0 if index < 3 else 1], 1,
+                           f"데모 시험 {index + 1:02}", SAMPLE_CREATED,
+                           experiment_data=deepcopy(SAMPLE_EXPERIMENT_DATA))
+            for index in range(6)]
 
 
 def seeded_services(*args, **kwargs):
@@ -52,6 +48,16 @@ def seeded_services(*args, **kwargs):
     main, experiment = build_services(*args, **kwargs)
     seed(main.service.repository)
     return main, experiment
+
+
+def document(definition, order):
+    """저장소가 쓰는 그 형식의 test.json 본문."""
+    return {"schema_version": SCHEMA_VERSION, "order": order,
+            "id": definition.id, "name": definition.name,
+            "created_utc": definition.created_utc, "revision": definition.revision,
+            "experiment_data": definition.experiment_data,
+            "ar_trapezoidal_step": definition.ar_trapezoidal_step,
+            "pf_straight_line": definition.pf_straight_line}
 
 
 def seed(repository, definitions=None, scenario=True):
@@ -64,20 +70,9 @@ def seed(repository, definitions=None, scenario=True):
         for order, definition in enumerate(d for d in definitions if d.group_id == group):
             folder = repository.root / group / definition.name
             folder.mkdir(parents=True, exist_ok=True)
-            document = {"schema_version": SCHEMA_VERSION, "order": order,
-                        "id": definition.id, "group_id": group, "revision": definition.revision,
-                        "type_id": definition.type_id, "name": definition.name,
-                        "runs": definition.runs,
-                        "spec_items": [{"id": s.id, "name": s.name,
-                                        "values": [list(v) for v in s.values],
-                                        "schema_id": s.schema_id,
-                                        "schema_version": s.schema_version}
-                                       for s in definition.spec_items],
-                        "experiment_data": definition.experiment_data,
-                        "ar_trapezoidal_step": definition.ar_trapezoidal_step,
-                        "pf_straight_line": definition.pf_straight_line}
-            (folder / TEST_FILE).write_text(json.dumps(document, ensure_ascii=False, indent=2),
-                                            encoding="utf-8")
+            (folder / TEST_FILE).write_text(
+                json.dumps(document(definition, order), ensure_ascii=False, indent=2),
+                encoding="utf-8")
             if body:
                 (folder / SCENARIO_FILE).write_text(body, encoding="utf-8", newline="")
     repository.reload()

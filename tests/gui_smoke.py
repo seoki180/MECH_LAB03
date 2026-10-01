@@ -9,7 +9,7 @@ import time
 import traceback
 import wx
 from experiment_app.bootstrap import build_services
-from experiment_app.demo.fixtures import BASIC_FIELDS, STEP_FIELDS, SCENARIOS
+from experiment_app.demo.fixtures import BASIC_FIELDS, SCENARIOS
 from sample_tests import seed
 from experiment_app.ui.frames.main_frame import MainFrame
 from experiment_app.ui.adapters.clipboard import WxClipboard
@@ -64,7 +64,7 @@ shutil.rmtree(OUTPUT / "smoke-export", ignore_errors=True)
 # 상한 없이 실제 운용과 같게 띄운다. 수집은 스모크가 중지 버튼을 누를 때 끝난다.
 main, experiment = build_services(OUTPUT / "smoke-data")
 tiles, pack_failures = MapPackSet.load(build_demo_pack(OUTPUT / "smoke-maps"))
-frame = MainFrame(main, experiment, WxClipboard(), tiles, (BASIC_FIELDS, STEP_FIELDS), SCENARIOS)
+frame = MainFrame(main, experiment, WxClipboard(), tiles, BASIC_FIELDS, SCENARIOS)
 frame.Show()
 frame.Raise()
 
@@ -281,6 +281,9 @@ def check_empty_start():
     check(main.definition is None, "No test is selected when the store is empty")
     check(details.heading.GetLabel() == "시험이 없습니다" and details.summary.IsShown(),
           "Empty store explains how to add or import a test")
+    check(details.fact_values["created"].GetLabel() == "—"
+          or not details.fact_values["created"].IsShown(),
+          "No creation date is shown without a test")
     check(not details.basic.IsShown() and not details.spec.IsShown(),
           "No editor fields are shown without a test")
     # 가져오기는 빈 상태에서도 눌려야 기존 시험 폴더를 들여올 수 있다.
@@ -302,7 +305,7 @@ def check_new_test_has_no_prefilled_values():
     check(details.basic.controls["name"].GetValue() == "새 시험",
           "A new test only carries the placeholder name")
     values = draft.fields()
-    unset = [p for p in values if p.startswith(("data/", "robot/", "spec/"))]
+    unset = [p for p in values if p.startswith(("data/", "robot/"))]
     check(unset and all(values[p] is None for p in unset),
           f"Every value field of a new test is unset ({len(unset)} fields)")
     check(draft.ar_trapezoidal_step is None and draft.pf_straight_line is None,
@@ -330,12 +333,16 @@ def check_new_test_has_no_prefilled_values():
     saved = main.service.save_new(draft, {})
     check(saved.revision == 1, "A new test saves with no value entered")
     check(all(v is None for p, v in saved.fields().items()
-              if p.startswith(("data/", "robot/", "spec/"))),
+              if p.startswith(("data/", "robot/"))),
           "Saving an untouched new test does not invent values")
     main.select(saved.id)
     frame.render()
     check(frame.tests.details.basic.controls["name"].GetValue() == "새 시험",
           "The saved empty test reloads without invented values")
+    # 생성일자는 저장된 뒤 화면에 보인다. 저장 전에는 꾸미지 않는다.
+    check(details.fact_values["created"].GetLabel() != "—"
+          and saved.created_utc.endswith("+00:00"),
+          "Saved test shows its creation date; stored as timezone-aware UTC")
     # 잘못된 값은 여전히 거부된다.
     rejected = None
     try:

@@ -23,7 +23,7 @@
 
 모든 호출은 application의 I/O 실행기에서 이루어진다(GUI 스레드 아님).
 """
-from dataclasses import asdict, replace
+from dataclasses import replace
 import json
 import re
 import shutil
@@ -33,9 +33,9 @@ from uuid import uuid4
 
 from experiment_app.domain.scenario import (SCENARIO_SUFFIX, format_scenario_csv,
                                             parse_scenario_csv)
-from experiment_app.domain.test_definition import AppError, definition_from_dict
+from experiment_app.domain.test_definition import AppError, definition_from_dict, utc_now
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 # profile 폴더 안에서 고정으로 쓰는 이름. 바깥 폴더 이름만 시험 이름을 따른다.
 TEST_FILE = "test.json"
 SCENARIO_FILE = "target" + SCENARIO_SUFFIX
@@ -195,20 +195,15 @@ class FolderTestRepository:
         if not isinstance(data, dict):
             raise AppError("STORAGE_FAILED", f"{folder.name}: test.json의 최상위 형식이 객체가 아닙니다.")
         version = data.pop("schema_version", SCHEMA_VERSION)
-        if version not in (1, 2, SCHEMA_VERSION):
+        if version not in (1, 2, 3, SCHEMA_VERSION):
             raise AppError("STORAGE_FAILED", f"{folder.name}: 지원하지 않는 저장 버전 {version}")
         index = data.pop("order", 1 << 30)
-        # 손으로 만든 파일에는 앱 내부 식별자가 없을 수 있다. 구조 키는 채우고,
-        # 실제 시험 내용(단계)은 채우지 않는다.
+        # 손으로 만든 파일에는 앱 내부 식별자가 없을 수 있다. 구조 키는 채운다.
         data.setdefault("id", uuid4().hex)
         data.setdefault("revision", 1)
-        data.setdefault("type_id", "demo")
-        data.setdefault("runs", 1)
         data["group_id"] = group_name
         # 폴더 이름이 곧 시험 이름이다. 탐색기에서 폴더 이름을 바꾸면 그대로 반영된다.
         data["name"] = folder.name
-        if "spec_items" not in data:
-            raise AppError("STORAGE_FAILED", f"{folder.name}: test.json에 spec_items가 없습니다.")
         try:
             definition = definition_from_dict(data)
         except (TypeError, KeyError, ValueError) as error:
@@ -218,9 +213,24 @@ class FolderTestRepository:
     # ------------------------------------------------------------------ 쓰기
 
     def _write_document(self, folder, definition, order):
+        """``test.json``을 쓴다. 담는 것은 식별 정보와 실험 입력 데이터뿐이다.
+
+        group_id는 상위 폴더가, name은 폴더 이름이 정하므로 파일에 되풀이하지 않는다.
+        단 name은 사람이 폴더만 보고도 어떤 시험인지 알 수 있게 사본으로 남긴다.
+        """
         if self.fail_save:
             raise AppError("STORAGE_FAILED", "데모 저장 실패입니다. 장치 탭에서 정상 시나리오로 바꾼 뒤 재시도하세요.")
-        body = {"schema_version": SCHEMA_VERSION, "order": order, **asdict(definition)}
+        body = {
+            "schema_version": SCHEMA_VERSION,
+            "order": order,
+            "id": definition.id,
+            "name": definition.name,
+            "created_utc": definition.created_utc,
+            "revision": definition.revision,
+            "experiment_data": definition.experiment_data,
+            "ar_trapezoidal_step": definition.ar_trapezoidal_step,
+            "pf_straight_line": definition.pf_straight_line,
+        }
         path = folder / TEST_FILE
         temporary = folder / (TEST_FILE + ".tmp")
         try:
@@ -312,6 +322,10 @@ class FolderTestRepository:
             group_folder = self.root / definition.group_id
             current = self._folders.get(definition.id)
             saved = replace(definition, revision=expected_revision + 1)
+            if not saved.created_utc:
+                # 생성일자가 없던 옛 파일. 지금을 생성 시각으로 찍되, 한 번 찍힌 뒤에는
+                # 이름 변경이나 값 수정으로 바뀌지 않는다.
+                saved = replace(saved, created_utc=utc_now())
             order = self._order.get(definition.id, len(
                 [d for d in self._tests if d.group_id == definition.group_id]))
             target = self._unique_folder(group_folder, saved.name, keep=current)

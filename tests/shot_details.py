@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from experiment_app.bootstrap import build_services  # noqa: E402
-from experiment_app.demo.fixtures import BASIC_FIELDS, STEP_FIELDS, SCENARIOS  # noqa: E402
+from experiment_app.demo.fixtures import BASIC_FIELDS, SCENARIOS  # noqa: E402
 from experiment_app.ui.frames.main_frame import MainFrame  # noqa: E402
 from experiment_app.ui.adapters.clipboard import WxClipboard  # noqa: E402
 from experiment_app.infrastructure.tiles import MapPackSet  # noqa: E402
@@ -27,7 +27,7 @@ main, experiment = build_services(OUT / "shot-data", tests_dir=OUT / "shot-test"
 seed(main.service.repository)
 main.select(main.service.repository.list()[0].id)
 tiles, _ = MapPackSet.load(OUT / "shot-maps")
-frame = MainFrame(main, experiment, WxClipboard(), tiles, (BASIC_FIELDS, STEP_FIELDS), SCENARIOS)
+frame = MainFrame(main, experiment, WxClipboard(), tiles, BASIC_FIELDS, SCENARIOS)
 frame.SetClientSize(frame.FromDIP(wx.Size(1280, 800)))
 frame.Show()
 frame.Layout()

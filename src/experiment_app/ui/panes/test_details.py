@@ -1,4 +1,5 @@
 import wx
+from experiment_app.presentation.view_models import format_created
 from experiment_app.ui.components.wheel_scrolled_panel import WheelScrolledPanel
 from experiment_app.ui.theme import text, button, surface, section_bar, chip, set_chip, MUTED
 from .parameter_editor import ParameterEditorPane
@@ -7,11 +8,10 @@ from .scenario import ScenarioPane
 
 
 class TestDetailsPane(WheelScrolledPanel):
-    def __init__(self, parent, fields, on_patch, on_structure, file_commands=None):
+    def __init__(self, parent, fields, on_patch, file_commands=None):
         super().__init__(parent)
         surface(self)
-        basic, steps = fields
-        self.basic_schemas = basic
+        self.basic_schemas = fields
         root = wx.BoxSizer(wx.VERTICAL)
         title_row = wx.BoxSizer(wx.HORIZONTAL)
         self.heading = text(self, "시험을 선택하세요", 22, weight="semibold")
@@ -34,7 +34,7 @@ class TestDetailsPane(WheelScrolledPanel):
         root.Add(self.summary, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, self.FromDIP(20))
         self.facts = wx.BoxSizer(wx.HORIZONTAL)
         self.fact_values = {}
-        for key, label in (("type", "종류"), ("revision", "리비전")):
+        for key, label in (("created", "생성"), ("revision", "리비전")):
             self.facts.Add(text(self, label, 13, colour=MUTED), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, self.FromDIP(8))
             self.fact_values[key] = text(self, "", 14, weight="semibold")
             self.facts.Add(self.fact_values[key], 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, self.FromDIP(28))
@@ -50,7 +50,7 @@ class TestDetailsPane(WheelScrolledPanel):
         self.scenario = ScenarioPane(self, commands.get("scenario_import", lambda: None),
                                      commands.get("scenario_clear", lambda: None))
         root.Add(self.scenario, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, self.FromDIP(20))
-        self.spec = SpecificationPane(self, steps, on_patch, on_structure)
+        self.spec = SpecificationPane(self, on_patch)
         root.Add(self.spec, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, self.FromDIP(20))
         self.advanced_toggle = button(self, "고급 설정 펼치기", self.toggle_advanced, align_left=True)
         root.Add(self.advanced_toggle, 0, wx.EXPAND | wx.ALL, self.FromDIP(20))
@@ -97,8 +97,10 @@ class TestDetailsPane(WheelScrolledPanel):
             editing = policy.context != "readonly"
             set_chip(self.mode, "편집 중" if editing else "조회 중", "active" if editing else "waiting")
             self.edit_hint.SetLabel("" if editing else "수정 버튼을 누르면 편집할 수 있습니다.")
-            self.fact_values["type"].SetLabel(definition.type_id)
-            self.fact_values["type"].SetToolTip("종류는 시험을 만든 뒤 바꿀 수 없습니다.")
+            self.fact_values["created"].SetLabel(format_created(definition.created_utc))
+            self.fact_values["created"].SetToolTip(
+                f"최초 저장 시각(UTC): {definition.created_utc}" if definition.created_utc
+                else "저장하면 생성 시각이 기록됩니다.")
             self.fact_values["revision"].SetLabel(str(definition.revision) if definition.revision else "저장 전")
             self.basic.render(self.basic_schemas, values, "", policy, errors)
             self.scenario.render(scenario, scenario_enabled)

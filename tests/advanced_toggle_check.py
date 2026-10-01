@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import wx
 from experiment_app.bootstrap import build_services
-from experiment_app.demo.fixtures import BASIC_FIELDS, STEP_FIELDS
+from experiment_app.demo.fixtures import BASIC_FIELDS
 from experiment_app.domain.edit_policy import EditPolicy
 from experiment_app.domain.test_definition import definition_from_dict, new_definition
 from experiment_app.ui.panes.test_details import TestDetailsPane
@@ -31,7 +31,7 @@ main, _ = build_services(OUTPUT / "toggle-data", duration=5)
 definition = new_definition("toggle-group")
 frame = wx.Frame(None)
 frame.SetClientSize(frame.FromDIP((900, 800)))
-pane = TestDetailsPane(frame, (BASIC_FIELDS, STEP_FIELDS), lambda path, value: None, lambda *a: None)
+pane = TestDetailsPane(frame, BASIC_FIELDS, lambda path, value: None)
 pane.render(definition, {}, EditPolicy.full(definition), {})
 frame.Show()
 frame.Layout()
@@ -68,6 +68,11 @@ check(spec.advanced_shown(), "Error in a hidden section expands the advanced tog
 check(not any(path.startswith("advanced/") for path in definition.fields()),
       "Definition no longer exposes advanced/ note paths")
 check(not hasattr(definition, "advanced_values"), "TestDefinition dropped advanced_values")
+# 저장 형식에서 빠진 잔여 구조. 화면도 로봇 전송도 쓰지 않았다.
+for gone in ("spec_items", "runs", "type_id"):
+    check(not hasattr(definition, gone), f"TestDefinition dropped {gone}")
+check(not any(path.startswith("spec/") for path in definition.fields()),
+      "Definition no longer exposes spec/ step paths")
 
 # Save files written before the removal still load.
 legacy = json.loads(json.dumps({
@@ -79,7 +84,8 @@ legacy = json.loads(json.dumps({
 }))
 restored = definition_from_dict(legacy)
 check(restored.name == "legacy" and restored.revision == 3,
-      "Legacy save file with advanced_values still loads")
+      "Legacy save file with spec_items/runs/type_id/advanced_values still loads")
+check(restored.created_utc == "", "Legacy file without a creation date reads as unset")
 
 print(json.dumps({"checks": [m for ok, m in results if ok]}, ensure_ascii=False, indent=2))
 frame.Destroy()

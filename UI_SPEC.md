@@ -104,7 +104,7 @@ Tests 이외의 페이지에서는 관련 없는 Test 편집 버튼을 숨기되
 
 - 화면 표기는 Group을 ‘시험목록’, Test를 ‘시험’으로 쓴다. 이 문서와 코드의 `group_id`·`test_id` 등 식별자와 타입 이름은 영문을 유지하며, 아래 설명의 Group/Test는 화면에서 시험목록/시험으로 읽는다.
 - Group → Test의 2단 계층을 초기 범위로 한다. 중첩 그룹은 향후 확장 항목이다.
-- 검색은 이름/종류를 대상으로 하며 검색 결과에서도 소속 그룹을 표시한다.
+- 검색은 시험 이름을 대상으로 하며 검색 결과에서도 소속 그룹을 표시한다.
 - 한 번 탭하면 선택 및 세부정보 표시. 선택 행은 배경과 테두리/표식으로 구분한다.
 - 그룹 선택 시 그룹명과 Test 개수를 표시하며 ‘실험 열기’는 비활성화한다.
 - 위/아래 버튼으로 같은 그룹 내 순서를 변경한다. 드래그는 선택적 보조 기능이다.
@@ -114,7 +114,7 @@ Tests 이외의 페이지에서는 관련 없는 Test 편집 버튼을 숨기되
 
 ### 3.4 Test 상세와 부분 편집
 
-Test 편집 화면은 기본정보, 모든 실험에 공통인 `experiment_data`, AR Trapezoidal Step·PF Straight Line 로봇 설정으로 구성한다. `experiment_data`는 `point_angle`의 Zero/Accel/Brake 각각 숫자 2개, `calibration_data` 숫자 2개, `limit_point`의 Accel/Brake 숫자, `zero_brake_angle` 숫자로 이루어진다. 기존 단계 데이터는 저장 파일 호환을 위해 보존하지만 현재 편집 화면에는 표시하지 않는다. 고급 메모(`advanced/note`)는 제거했으며, 이 값을 가진 예전 저장 파일은 해당 항목을 버리고 읽는다. 수집된 실행 데이터와 설정용 실험 데이터를 혼동하지 않도록 화면에서 각각 ‘측정 결과’와 ‘실험 입력 데이터’로 부른다.
+Test 편집 화면은 기본정보, 모든 실험에 공통인 `experiment_data`, AR Trapezoidal Step·PF Straight Line 로봇 설정으로 구성한다. `experiment_data`는 `point_angle`의 Zero/Accel/Brake 각각 숫자 2개, `calibration_data` 숫자 2개, `limit_point`의 Accel/Brake 숫자, `zero_brake_angle` 숫자로 이루어진다. 단계 데이터(`spec_items`), 반복 횟수(`runs`), 종류(`type_id`), 고급 메모(`advanced/note`)는 화면도 로봇 전송도 쓰지 않던 잔여 구조이므로 제거했다. 이 값을 가진 예전 저장 파일은 해당 항목을 버리고 읽으며 다시 쓰지 않는다. 수집된 실행 데이터와 설정용 실험 데이터를 혼동하지 않도록 화면에서 각각 ‘측정 결과’와 ‘실험 입력 데이터’로 부른다.
 
 실험 입력 데이터는 네 구역을 테두리와 제목으로 분리하고, 각 항목의 이름은 왼쪽 라벨 영역, 48 DIP 이상 입력창은 오른쪽에 배치한다. 배열 항목의 표시 번호는 1부터 시작하지만 저장 경로의 index는 0부터 시작한다.
 
@@ -130,7 +130,7 @@ Test 선택 시 조회 상태이며 수정 버튼으로 편집을 시작한다. 
 
 필드 스키마는 stable key, label, type, unit, precision, required, min/max, enum options, help를 제공한다. 입력 중 임시 문자열과 확정된 타입 값을 분리한다. 검증은 필드 아래 오류 문구와 상단 요약으로 제공하며 최초 오류에 초점을 보낸다. 실제 허용범위를 모르는 필드에는 임의의 장비 제한을 넣지 않는다.
 
-초기 Type은 생성 후 변경 불가로 제안한다. Type 변경으로 스키마와 기존 값이 사라지는 문제를 피하기 위한 UI 기본값이며, 변환 정책이 정해지면 별도 기능으로 추가한다. Runs(반복 횟수)는 Test 설정 화면에서 제외했다. 도메인의 `runs` 값은 저장 호환을 위해 유지하되 편집 스키마에 없으므로 patch로 수정할 수 없다.
+`test.json`은 식별 정보와 실험 입력 데이터만 담는다. 저장 키는 `schema_version`, `order`, `id`, `name`, `created_utc`, `revision`, `experiment_data`, `ar_trapezoidal_step`, `pf_straight_line`이다. `group_id`는 상위 폴더 이름이 정하므로 파일에 되풀이하지 않는다. `created_utc`는 최초 저장 시각이며 이름 변경이나 값 수정으로 바뀌지 않는다. 복제는 새 시험이므로 생성일자를 새로 찍는다. 생성일자가 없던 파일은 빈 값으로 읽고 처음 저장할 때 찍는다.
 
 ## 4. 실험 윈도우
 
@@ -246,7 +246,7 @@ project/
 │   ├── __main__.py
 │   ├── bootstrap.py
 │   ├── domain/
-│   │   ├── test_definition.py     # Test, SpecItem, FieldSchema
+│   │   ├── test_definition.py     # TestDefinition, FieldSchema
 │   │   ├── scenario.py            # 시험시나리오 CSV(time,target_v) 해석/직렬화
 │   │   ├── edit_policy.py         # 수정 허용·검증
 │   │   ├── session.py             # snapshot(정의+시나리오), 상태 전이
@@ -289,7 +289,7 @@ project/
 | MainHeader          | project, active_page, commands, session_badge | navigate/save/open_experiment | 저장·세션 실행      |
 | TestTreePane        | groups, selection, filter                     | select/create/delete/reorder  | 저장소 조회         |
 | TestDetailsPane     | 기본정보 VM, edit policy                      | 기본정보 patch, 시험 가져오기/내보내기 | 권한 최종 판정      |
-| SpecificationPane   | SpecItem 목록, 선택 항목                      | select/add/remove/reorder     | 장비 명령           |
+| SpecificationPane   | 실험 입력 데이터·로봇 설정 구역               | 구역별 typed field patch      | 장비 명령           |
 | ParameterEditorPane | field schema, values, editable keys, errors   | typed field patch             | 파일 쓰기           |
 | ScenarioPane        | ScenarioViewModel(state/summary/detail/file) | 시나리오 import/clear         | CSV 읽기·쓰기       |
 | SensorPartPane      | part config, metric snapshot                  | 없음 (표시 전용)              | 장치 수신·측정 계산 |
@@ -302,9 +302,8 @@ View는 값 렌더링 중 intent를 다시 발생시키지 않는다. `dispose()
 
 | 모델              | 최소 필드                                                                                                                          |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| TestDefinition    | id, group_id, revision, type_id, name, runs, experiment_data, legacy spec_items, advanced_values                                   |
-| SpecItem          | id, schema_id, schema_version, name, values(field_key→typed value)                                                                 |
-| FieldPatch        | test_id, base_revision, changes(path→value); SpecItem 경로는 배열 index 대신 stable id                                             |
+| TestDefinition    | id, group_id, revision, name, created_utc, experiment_data, ar_trapezoidal_step, pf_straight_line                                  |
+| FieldPatch        | test_id, base_revision, changes(path→value); 경로는 `data/`·`robot/` 접두어와 배열 index를 쓴다                                    |
 | EditPolicy        | context, editable_paths, locked_reasons                                                                                            |
 | ExecutionSnapshot | test_id, revision, 정의 전체 복사, 적용 채널/단위/설정, 실행 시점 고정 시험시나리오                                                |
 | Session           | session_id, snapshot, state, start/end time, end_reason, result_status                                                             |
@@ -405,7 +404,7 @@ UI 착수는 위 기본값으로 진행할 수 있다. 다음 항목은 해당 �
 | 편집 제한의 기준         | context별 허용 field path             | 실제 Test 업무 규칙 연결                 |
 | 채널·단위·범위·필수 여부 | 데모 메타데이터                       | 실센서 연결                              |
 | 센서 통신과 기록률       | 교체 가능한 adapter                   | 수집/기록 구현                           |
-| Runs 및 자동 완료        | 반복 횟수, 중지까지 수집(재생은 자료 끝) | 실험 제어 구현                         |
+| 자동 완료 조건           | 중지까지 수집(재생은 자료 끝)         | 실험 제어 구현                           |
 | 지도/오프라인            | FakeMapView, WebView 후보             | 실제 지도 구현                           |
 | 저장 형식·결과 보존      | Repository/Recorder 인터페이스만 고정 | 영속 저장 구현                           |
 | 복사의 데이터 범위       | 최신 화면/영역 TSV                    | 사용성 검증; 원본 전체는 내보내기로 분리 |

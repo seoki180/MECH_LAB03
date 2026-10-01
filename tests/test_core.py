@@ -20,7 +20,7 @@ from experiment_app.presentation.view_models import metric_model
 from experiment_app.infrastructure.tiles import MBTilesSource, MapPackSet
 from experiment_app.ui.adapters.mercator import (lonlat_to_pixel, pixel_to_lonlat, ground_resolution,
                                                  world_size, zoom_about)
-from sample_tests import SAMPLE_EXPERIMENT_DATA, sample_definitions, seed
+from sample_tests import SAMPLE_EXPERIMENT_DATA, seed
 
 
 @pytest.fixture
@@ -53,12 +53,14 @@ def prepare(main, experiment):
 def test_patch_preserves_unrelated_values_and_revision(services):
     main, _ = services
     original = main.service.repository.list()[0]
-    step = original.spec_items[1]
-    saved = main.service.save_patch(FieldPatch(original.id, 1, {f"spec/{step.id}/target": "44.25"}))
+    saved = main.service.save_patch(FieldPatch(original.id, 1,
+                                               {"data/point_angle/Accel/1": "44.25"}))
     assert saved.revision == 2
-    assert saved.spec_items[0] == original.spec_items[0]
-    assert saved.spec_items[2] == original.spec_items[2]
-    assert dict(saved.spec_items[1].values) == {**dict(step.values), "target": 44.25}
+    # 건드리지 않은 값은 그대로 남는다.
+    assert saved.experiment_data["point_angle"]["Zero"] == original.experiment_data["point_angle"]["Zero"]
+    assert saved.experiment_data["calibration_data"] == original.experiment_data["calibration_data"]
+    assert saved.experiment_data["point_angle"]["Accel"] == [22, 44.25]
+    assert saved.created_utc == original.created_utc, "수정이 생성일자를 바꾸지 않는다"
     with pytest.raises(AppError, match="revision"):
         main.service.save_patch(FieldPatch(original.id, 1, {"name": "conflict"}))
 
@@ -102,13 +104,12 @@ def test_experiment_data_rejects_invalid_or_unknown_fields(services):
 
 def test_legacy_single_file_migrates_into_test_folders(tmp_path):
     """예전 .mechlab/tests.json은 test/<시험목록>/<시험>/test.json 으로 한 번 옮겨진다."""
-    from dataclasses import asdict
-    definitions = sample_definitions()
-    groups = {definitions[0].group_id: definitions[0].group_id}
-    legacy = asdict(definitions[0])
-    legacy.pop("experiment_data")
-    legacy.pop("ar_trapezoidal_step")
-    legacy.pop("pf_straight_line")
+    # 옛 형식 그대로. spec_items·runs·type_id가 있고 생성일자는 없다.
+    legacy = {"id": "legacy-1", "group_id": "예전 목록", "revision": 1, "type_id": "demo",
+              "name": "옛날 시험", "runs": 1,
+              "spec_items": [{"id": "s1", "name": "단계 1", "values": [["target", 1.0]],
+                              "schema_id": "demo-step", "schema_version": 1}]}
+    groups = {"예전 목록": "예전 목록"}
     source = tmp_path / "tests.json"
     source.write_text(json.dumps({"schema_version": 1, "groups": groups,
                                   "tests": [legacy]}, ensure_ascii=False), encoding="utf-8")
@@ -119,9 +120,78 @@ def test_legacy_single_file_migrates_into_test_folders(tmp_path):
     # experiment_data가 없던 파일은 값 없음으로 읽는다. 옛 데모 기본값을 되살리지 않는다.
     assert moved.experiment_data == EMPTY_EXPERIMENT_DATA
     assert moved.ar_trapezoidal_step is None and moved.pf_straight_line is None
-    assert (root / moved.group_id / moved.name / "test.json").is_file()
+    written = root / moved.group_id / moved.name / "test.json"
+    assert written.is_file()
+    # 옛 키는 읽을 때 버리고 다시 쓰지 않는다.
+    body = json.loads(written.read_text(encoding="utf-8"))
+    assert not {"spec_items", "runs", "type_id", "advanced_values"} & set(body)
+    assert body["schema_version"] == 4
     # 두 번째 생성은 이미 폴더가 있으므로 다시 옮기지 않는다.
     assert len(FolderTestRepository(root, legacy_path=source).list()) == 1
+
+
+def test_test_json_holds_only_identity_and_experiment_data(tmp_path):
+    """저장 형식에는 식별 정보와 실험 입력 데이터만 남는다."""
+    main, _ = build_services(tmp_path, duration=0.16)
+    try:
+        group = main.service.repository.add_group("형식 확인")
+        main.new(group)
+        saved = main.service.save_new(main.definition, {"data/zero_brake_angle": "-14"})
+        body = json.loads(main.service.repository.path_of(saved.id).read_text(encoding="utf-8"))
+        assert set(body) == {"schema_version", "order", "id", "name", "created_utc",
+                             "revision", "experiment_data", "ar_trapezoidal_step",
+                             "pf_straight_line"}
+        assert body["experiment_data"]["zero_brake_angle"] == -14.0
+        assert body["id"] == saved.id and body["name"] == saved.name
+        # group_id는 상위 폴더가 정하므로 파일에 되풀이하지 않는다.
+        assert "group_id" not in body
+        assert body["created_utc"].endswith("+00:00"), "생성일자는 타임존이 있는 UTC"
+    finally:
+        main.dispose()
+
+
+def test_created_utc_survives_rename_and_edit(tmp_path):
+    """생성일자는 최초 저장 시각이다. 이름 변경이나 값 수정으로 바뀌지 않는다."""
+    main, _ = build_services(tmp_path, duration=0.16)
+    try:
+        group = main.service.repository.add_group("생성일자")
+        main.new(group)
+        saved = main.service.save_new(main.definition, {})
+        created = saved.created_utc
+        assert created
+        renamed = main.service.save_patch(FieldPatch(saved.id, saved.revision,
+                                                     {"name": "이름 바뀐 시험"}))
+        assert renamed.created_utc == created
+        edited = main.service.save_patch(FieldPatch(renamed.id, renamed.revision,
+                                                    {"data/zero_brake_angle": "-3"}))
+        assert edited.created_utc == created
+        assert FolderTestRepository(tmp_path / "test").get(saved.id).created_utc == created
+        # 복제는 새 시험이므로 생성일자를 새로 찍는다. 같은 초에 만들면 값이 같을 수
+        # 있으므로, 분명히 과거인 원본으로 확인한다.
+        old = replace(edited, created_utc="2020-01-01T00:00:00+00:00")
+        copy = main.service.duplicate(old, group)
+        assert copy.created_utc > old.created_utc
+    finally:
+        main.dispose()
+
+
+def test_file_without_created_utc_is_stamped_on_first_save(tmp_path):
+    """생성일자가 없던 파일은 빈 값으로 읽고, 처음 저장할 때 찍는다."""
+    main, _ = build_services(tmp_path, duration=0.16)
+    try:
+        repository = main.service.repository
+        group = repository.add_group("생성일자 없음")
+        folder = repository.root / group / "손으로 만든 시험"
+        folder.mkdir(parents=True)
+        (folder / "test.json").write_text(json.dumps({"id": "hand-1", "revision": 1}),
+                                          encoding="utf-8")
+        repository.reload()
+        loaded = repository.get("hand-1")
+        assert loaded.created_utc == "", "없는 값을 현재 시각으로 꾸미지 않는다"
+        saved = main.service.save_patch(FieldPatch("hand-1", 1, {"data/zero_brake_angle": "1"}))
+        assert saved.created_utc.endswith("+00:00")
+    finally:
+        main.dispose()
 
 
 def test_empty_test_folder_is_a_valid_start(tmp_path):
@@ -137,8 +207,7 @@ def test_empty_test_folder_is_a_valid_start(tmp_path):
         main.new(group)
         assert main.definition.revision == 0 and main.definition.name == "새 시험"
         assert main.definition.experiment_data == EMPTY_EXPERIMENT_DATA
-        assert dict(main.definition.spec_items[0].values) == {
-            "target": None, "duration": None, "enabled": None}
+        assert main.definition.created_utc, "새 시험은 생성일자를 가진다"
         assert main.definition.ar_trapezoidal_step is None
         assert main.definition.pf_straight_line is None
     finally:
@@ -154,12 +223,9 @@ def test_new_test_saves_without_any_value_entered(tmp_path):
         saved = main.service.save_new(main.definition, {})
         assert saved.revision == 1
         assert saved.experiment_data == EMPTY_EXPERIMENT_DATA
-        assert dict(saved.spec_items[0].values) == {"target": None, "duration": None,
-                                                    "enabled": None}
         reloaded = FolderTestRepository(tmp_path / "test").get(saved.id)
         assert reloaded.experiment_data == EMPTY_EXPERIMENT_DATA
-        assert dict(reloaded.spec_items[0].values) == {"target": None, "duration": None,
-                                                      "enabled": None}
+        assert reloaded.created_utc == saved.created_utc
     finally:
         main.dispose()
 
@@ -192,16 +258,13 @@ def test_blank_values_are_accepted_where_a_value_is_optional(tmp_path):
     try:
         group = main.service.repository.add_group("빈 값 시험목록")
         main.new(group)
-        step = main.definition.spec_items[0].id
         saved = main.service.save_new(main.definition, {
             "data/zero_brake_angle": "",
             "data/calibration_data/0": None,
-            f"spec/{step}/target": "",
             "robot/ar_trapezoidal_step/apply_rate": "",
         })
         assert saved.experiment_data["zero_brake_angle"] is None
         assert saved.experiment_data["calibration_data"][0] is None
-        assert dict(saved.spec_items[0].values)["target"] is None
         assert saved.ar_trapezoidal_step["apply_rate"] is None
     finally:
         main.dispose()
@@ -233,7 +296,7 @@ def test_advanced_sections_may_stay_unset_and_the_test_still_runs(tmp_path):
 def test_service_enforces_partial_policy(services):
     main, _ = services
     original = main.service.repository.list()[0]
-    path = f"spec/{original.spec_items[0].id}/target"
+    path = "data/zero_brake_angle"
     service = DefinitionService(main.service.repository, schemas, lambda d: EditPolicy("partial", frozenset({path})))
     with pytest.raises(AppError) as error:
         service.save_patch(FieldPatch(original.id, 1, {"name": "not allowed", path: 3}))
@@ -242,7 +305,10 @@ def test_service_enforces_partial_policy(services):
     assert service.save_patch(FieldPatch(original.id, 1, {path: 3})).revision == 2
 
 
-@pytest.mark.parametrize("path,value", [("runs", "0"), ("runs", "1.5"), ("runs", True), ("name", "  "), ("type_id", "other")])
+@pytest.mark.parametrize("path,value", [("name", "  "),
+                                        # 저장 형식에서 빠진 옛 경로는 더 이상 수정할 수 없다.
+                                        ("runs", "1"), ("type_id", "other"),
+                                        ("spec/s1/target", "1")])
 def test_validation(services, path, value):
     main, _ = services
     original = main.service.repository.list()[0]
@@ -421,7 +487,7 @@ def test_gps_loss_keeps_last_valid_fix(services):
 def test_invalid_values_never_enter_saved_definition(services):
     main, _ = services
     original = main.service.repository.list()[0]
-    path = f"spec/{original.spec_items[0].id}/target"
+    path = "data/calibration_data/0"
     for value in ("nan", "inf", "-inf", "bad"):
         with pytest.raises(AppError):
             main.service.save_patch(FieldPatch(original.id, original.revision, {path: value}))
@@ -553,7 +619,7 @@ def test_robot_settings_legacy_patch_restore_snapshot_and_duplicate(services, tm
         "robot/pf_straight_line/join_anywhere": None,
     }))
     assert later.experiment_data == original.experiment_data
-    assert later.spec_items == original.spec_items
+    assert later.created_utc == original.created_utc
     assert later.ar_trapezoidal_step["apply_rate"] is None
     assert later.pf_straight_line["start_x"] == -1000
     assert later.pf_straight_line["join_anywhere"] is None

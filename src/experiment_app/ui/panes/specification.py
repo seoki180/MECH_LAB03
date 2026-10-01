@@ -13,7 +13,7 @@ PRIMARY_SECTIONS = ("point_angle",)
 class SpecificationPane(wx.Panel):
     """Existing input and two independent robot settings share schema-based editors."""
 
-    def __init__(self, parent, schemas, on_patch, on_structure):
+    def __init__(self, parent, on_patch):
         super().__init__(parent)
         surface(self)
         root = wx.BoxSizer(wx.VERTICAL)

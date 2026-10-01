@@ -19,11 +19,6 @@ def value_field(key, label, **kwargs):
     return FieldSchema(key, label, required=False, **kwargs)
 
 
-STEP_FIELDS = (
-    value_field("target", "목표값"),
-    value_field("duration", "단계 시간", unit="s", minimum=0),
-    value_field("enabled", "사용", kind="bool"),
-)
 # 시험 이름은 폴더 이름이므로 비울 수 없다.
 BASIC_FIELDS = (FieldSchema("name", "시험 이름", "str", help="저장할 실험 설정 이름"),)
 DATA_FIELDS = {
@@ -46,8 +41,6 @@ SCENARIOS = ("정상", "센서 지연/단절", "값 오류", "GPS fix 손실", "
 
 def schemas(definition):
     fields = {s.key: s for s in BASIC_FIELDS}
-    for item in definition.spec_items:
-        fields.update((f"spec/{item.id}/{s.key}", s) for s in STEP_FIELDS)
     for section, section_fields in DATA_FIELDS.items():
         prefix = "data/" if section == "zero_brake_angle" else f"data/{section}/"
         fields.update((prefix + field.key, field) for field in section_fields)
