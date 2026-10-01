@@ -10,12 +10,14 @@ import traceback
 import wx
 from experiment_app.bootstrap import build_services
 from experiment_app.demo.fixtures import BASIC_FIELDS, STEP_FIELDS, SCENARIOS
+from sample_tests import seed
 from experiment_app.ui.frames.main_frame import MainFrame
 from experiment_app.ui.adapters.clipboard import WxClipboard
 from experiment_app.infrastructure.tiles import MapPackSet
 from experiment_app.ui.adapters.tile_map import MIN_ZOOM, MAX_ZOOM
 from experiment_app.ui.adapters.mercator import lonlat_to_pixel
 from experiment_app.domain.session import State
+from experiment_app.domain.test_definition import AppError, FieldPatch
 
 OUTPUT = Path("artifacts")
 OUTPUT.mkdir(exist_ok=True)
@@ -56,7 +58,7 @@ def build_demo_pack(directory, min_zoom=10, max_zoom=16):
     return directory
 
 
-# 이전 실행이 남긴 시험 폴더와 기록을 지우고 데모 자료로 다시 채운다.
+# 이전 실행이 남긴 시험 폴더와 기록을 지우고 빈 상태에서 시작한다.
 shutil.rmtree(OUTPUT / "smoke-data", ignore_errors=True)
 shutil.rmtree(OUTPUT / "smoke-export", ignore_errors=True)
 # 상한 없이 실제 운용과 같게 띄운다. 수집은 스모크가 중지 버튼을 누를 때 끝난다.
@@ -271,6 +273,85 @@ def check_chart_touch_scroll(exp):
     wx.Yield()
 
 
+def check_empty_start():
+    """시험이 하나도 없는 첫 실행. 빈 화면에서도 다음 조치를 알 수 있어야 한다."""
+    details = frame.tests.details
+    check(not main.service.repository.list() and not main.service.repository.groups(),
+          "First run starts with no demo tests and no groups")
+    check(main.definition is None, "No test is selected when the store is empty")
+    check(details.heading.GetLabel() == "시험이 없습니다" and details.summary.IsShown(),
+          "Empty store explains how to add or import a test")
+    check(not details.basic.IsShown() and not details.spec.IsShown(),
+          "No editor fields are shown without a test")
+    # 가져오기는 빈 상태에서도 눌려야 기존 시험 폴더를 들여올 수 있다.
+    check(details.file_buttons["import"].IsEnabled(), "Import stays available on an empty store")
+    check(not details.file_buttons["export"].IsShown(), "Export is hidden without a test")
+    for key in ("edit", "duplicate", "open", "save"):
+        check(not frame.header.buttons[key].IsEnabled(),
+              f"Header '{key}' is disabled while the store is empty")
+    check(frame.header.buttons["add"].IsEnabled(), "Add stays enabled on an empty store")
+
+
+def check_new_test_has_no_prefilled_values():
+    """새 시험에는 초기값이 없다. 입력란이 전부 비어 있고 advanced도 미설정이다."""
+    group = main.service.repository.add_group("빈 값 확인 · 데모")
+    main.new(group)
+    draft = main.definition
+    frame.render()
+    details = frame.tests.details
+    check(details.basic.controls["name"].GetValue() == "새 시험",
+          "A new test only carries the placeholder name")
+    values = draft.fields()
+    unset = [p for p in values if p.startswith(("data/", "robot/", "spec/"))]
+    check(unset and all(values[p] is None for p in unset),
+          f"Every value field of a new test is unset ({len(unset)} fields)")
+    check(draft.ar_trapezoidal_step is None and draft.pf_straight_line is None,
+          "Advanced robot sections stay absent on a new test")
+    # 화면도 비어 있어야 한다. 0이나 꾸며낸 값이 보이면 안 된다.
+    if not details.spec.advanced_shown():
+        details.toggle_advanced()
+    filled = []
+    for editor, _, _ in details.spec.editors:
+        for path, control in editor.controls.items():
+            if isinstance(control, wx.TextCtrl) and control.GetValue() != "":
+                filled.append((path, control.GetValue()))
+            elif isinstance(control, wx.Choice) and control.GetStringSelection() != "미설정":
+                filled.append((path, control.GetStringSelection()))
+            elif isinstance(control, wx.CheckBox) \
+                    and control.Get3StateValue() != wx.CHK_UNDETERMINED:
+                filled.append((path, control.Get3StateValue()))
+    check(not filled, f"No input shows a prefilled value on a new test (found {filled[:3]})")
+    boxes = [c for editor, _, _ in details.spec.editors for c in editor.controls.values()
+             if isinstance(c, wx.CheckBox)]
+    check(boxes and all(b.Is3State() for b in boxes),
+          "Robot option checkboxes are 3-state so unset differs from off")
+    details.toggle_advanced()
+    # 빈 값 그대로 저장된다. 검증은 입력한 값에만 적용된다.
+    saved = main.service.save_new(draft, {})
+    check(saved.revision == 1, "A new test saves with no value entered")
+    check(all(v is None for p, v in saved.fields().items()
+              if p.startswith(("data/", "robot/", "spec/"))),
+          "Saving an untouched new test does not invent values")
+    main.select(saved.id)
+    frame.render()
+    check(frame.tests.details.basic.controls["name"].GetValue() == "새 시험",
+          "The saved empty test reloads without invented values")
+    # 잘못된 값은 여전히 거부된다.
+    rejected = None
+    try:
+        main.service.save_patch(FieldPatch(saved.id, saved.revision,
+                                           {"data/zero_brake_angle": "bad"}))
+    except AppError as error:
+        rejected = error
+    check(rejected is not None and rejected.code == "VALIDATION_FAILED"
+          and "data/zero_brake_angle" in rejected.errors,
+          "The validator still rejects a non-numeric value on an empty test")
+    main.service.repository.delete(saved.id)
+    main.service.repository.delete_group(group)
+    main.select(None)
+    frame.render()
+
+
 def later(action, delay=250):
     def guarded():
         try:
@@ -282,6 +363,13 @@ def later(action, delay=250):
 
 
 def start():
+    # 첫 실행은 빈 상태다. 데모 시험이 없는 화면부터 확인한 뒤 자료를 넣는다.
+    check_empty_start()
+    check_new_test_has_no_prefilled_values()
+    seed(main.service.repository)
+    main.select(main.service.repository.list()[0].id)
+    frame.selected_group = main.definition.group_id
+    frame.render()
     check(frame.tests.details.IsShown(), "Tests detail visible")
     capture(frame, "main-1280")
     details = frame.tests.details

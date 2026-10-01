@@ -8,10 +8,10 @@ from threading import enumerate as threads
 import pytest
 
 from experiment_app.bootstrap import build_services
-from experiment_app.demo.fixtures import fixtures, schemas, CHANNELS
+from experiment_app.demo.fixtures import schemas, CHANNELS
 from experiment_app.domain.edit_policy import EditPolicy
 from experiment_app.domain.test_definition import FieldPatch, AppError
-from experiment_app.domain.test_definition import DEFAULT_EXPERIMENT_DATA
+from experiment_app.domain.test_definition import EMPTY_EXPERIMENT_DATA
 from experiment_app.domain.session import State
 from experiment_app.domain.telemetry import SensorSample
 from experiment_app.infrastructure.test_folders import FolderTestRepository
@@ -20,11 +20,15 @@ from experiment_app.presentation.view_models import metric_model
 from experiment_app.infrastructure.tiles import MBTilesSource, MapPackSet
 from experiment_app.ui.adapters.mercator import (lonlat_to_pixel, pixel_to_lonlat, ground_resolution,
                                                  world_size, zoom_about)
+from sample_tests import SAMPLE_EXPERIMENT_DATA, sample_definitions, seed
 
 
 @pytest.fixture
 def services(tmp_path):
     main, experiment = build_services(tmp_path, duration=0.16)
+    # 앱은 빈 폴더로 시작한다. 저장·실행 경로를 확인하려면 자료가 필요하므로 넣는다.
+    seed(main.service.repository)
+    main.select(main.service.repository.list()[0].id)
     yield main, experiment
     session = experiment.sessions.view()
     if session:
@@ -62,7 +66,7 @@ def test_patch_preserves_unrelated_values_and_revision(services):
 def test_experiment_data_edit_persistence_and_session_snapshot(services, tmp_path):
     main, experiment = services
     original = main.service.repository.get("demo-0")
-    assert original.experiment_data == DEFAULT_EXPERIMENT_DATA
+    assert original.experiment_data == SAMPLE_EXPERIMENT_DATA
     saved = main.service.save_patch(FieldPatch(original.id, original.revision, {
         "data/point_angle/Accel/1": "-7.25",
         "data/calibration_data/0": "0.125",
@@ -99,7 +103,8 @@ def test_experiment_data_rejects_invalid_or_unknown_fields(services):
 def test_legacy_single_file_migrates_into_test_folders(tmp_path):
     """예전 .mechlab/tests.json은 test/<시험목록>/<시험>/test.json 으로 한 번 옮겨진다."""
     from dataclasses import asdict
-    groups, definitions = fixtures()
+    definitions = sample_definitions()
+    groups = {definitions[0].group_id: definitions[0].group_id}
     legacy = asdict(definitions[0])
     legacy.pop("experiment_data")
     legacy.pop("ar_trapezoidal_step")
@@ -111,11 +116,118 @@ def test_legacy_single_file_migrates_into_test_folders(tmp_path):
     restored = FolderTestRepository(root, legacy_path=source)
     assert sorted(p.name for p in root.iterdir()) == sorted(groups)
     moved = restored.get(legacy["id"])
-    assert moved.experiment_data == DEFAULT_EXPERIMENT_DATA
+    # experiment_data가 없던 파일은 값 없음으로 읽는다. 옛 데모 기본값을 되살리지 않는다.
+    assert moved.experiment_data == EMPTY_EXPERIMENT_DATA
     assert moved.ar_trapezoidal_step is None and moved.pf_straight_line is None
     assert (root / moved.group_id / moved.name / "test.json").is_file()
     # 두 번째 생성은 이미 폴더가 있으므로 다시 옮기지 않는다.
     assert len(FolderTestRepository(root, legacy_path=source).list()) == 1
+
+
+def test_empty_test_folder_is_a_valid_start(tmp_path):
+    """시험이 없어도 앱은 뜬다. 데모 시험을 만들어 넣지 않는다."""
+    main, experiment = build_services(tmp_path, duration=0.16)
+    try:
+        repository = main.service.repository
+        assert repository.list() == [] and repository.groups() == {}
+        assert not repository.load_errors
+        assert main.definition is None and not main.dirty
+        # 시험목록을 만들면 그 안에 빈 시험을 만들 수 있다.
+        group = repository.add_group("새 시험목록")
+        main.new(group)
+        assert main.definition.revision == 0 and main.definition.name == "새 시험"
+        assert main.definition.experiment_data == EMPTY_EXPERIMENT_DATA
+        assert dict(main.definition.spec_items[0].values) == {
+            "target": None, "duration": None, "enabled": None}
+        assert main.definition.ar_trapezoidal_step is None
+        assert main.definition.pf_straight_line is None
+    finally:
+        main.dispose()
+
+
+def test_new_test_saves_without_any_value_entered(tmp_path):
+    """초기값이 없으므로 아무것도 입력하지 않고도 저장된다. 빈 값은 None으로 남는다."""
+    main, _ = build_services(tmp_path, duration=0.16)
+    try:
+        group = main.service.repository.add_group("빈 시험목록")
+        main.new(group)
+        saved = main.service.save_new(main.definition, {})
+        assert saved.revision == 1
+        assert saved.experiment_data == EMPTY_EXPERIMENT_DATA
+        assert dict(saved.spec_items[0].values) == {"target": None, "duration": None,
+                                                    "enabled": None}
+        reloaded = FolderTestRepository(tmp_path / "test").get(saved.id)
+        assert reloaded.experiment_data == EMPTY_EXPERIMENT_DATA
+        assert dict(reloaded.spec_items[0].values) == {"target": None, "duration": None,
+                                                      "enabled": None}
+    finally:
+        main.dispose()
+
+
+@pytest.mark.parametrize("path,value", [
+    ("data/zero_brake_angle", "nan"),
+    ("data/zero_brake_angle", "bad"),
+    ("data/calibration_data/0", "inf"),
+    ("data/limit_point/Accel", True),
+    ("name", "  "),
+])
+def test_validator_still_rejects_bad_values_on_an_empty_new_test(tmp_path, path, value):
+    """미설정은 허용하지만 입력한 값의 검증 규칙은 그대로다."""
+    main, _ = build_services(tmp_path, duration=0.16)
+    try:
+        group = main.service.repository.add_group("검증 시험목록")
+        main.new(group)
+        with pytest.raises(AppError) as error:
+            main.service.save_new(main.definition, {path: value})
+        assert error.value.code == "VALIDATION_FAILED"
+        assert path in error.value.errors
+        assert main.service.repository.list() == []
+    finally:
+        main.dispose()
+
+
+def test_blank_values_are_accepted_where_a_value_is_optional(tmp_path):
+    """빈 문자열은 '값 없음'으로 저장된다. 0으로 바꾸지 않는다."""
+    main, _ = build_services(tmp_path, duration=0.16)
+    try:
+        group = main.service.repository.add_group("빈 값 시험목록")
+        main.new(group)
+        step = main.definition.spec_items[0].id
+        saved = main.service.save_new(main.definition, {
+            "data/zero_brake_angle": "",
+            "data/calibration_data/0": None,
+            f"spec/{step}/target": "",
+            "robot/ar_trapezoidal_step/apply_rate": "",
+        })
+        assert saved.experiment_data["zero_brake_angle"] is None
+        assert saved.experiment_data["calibration_data"][0] is None
+        assert dict(saved.spec_items[0].values)["target"] is None
+        assert saved.ar_trapezoidal_step["apply_rate"] is None
+    finally:
+        main.dispose()
+
+
+def test_advanced_sections_may_stay_unset_and_the_test_still_runs(tmp_path):
+    """advanced(보정값·한계값·Zero Brake·로봇 설정)가 모두 비어도 준비·실행이 된다."""
+    main, experiment = build_services(tmp_path, duration=0.16)
+    try:
+        group = main.service.repository.add_group("advanced 미설정")
+        main.new(group)
+        saved = main.service.save_new(main.definition, {"name": "값 없는 시험"})
+        assert saved.experiment_data["calibration_data"] == [None, None]
+        assert saved.experiment_data["limit_point"] == {"Accel": None, "Brake": None}
+        assert saved.experiment_data["zero_brake_angle"] is None
+        assert saved.ar_trapezoidal_step is None and saved.pf_straight_line is None
+        session = experiment.sessions.prepare(saved.id, saved.revision)
+        assert session.snapshot.definition.experiment_data == EMPTY_EXPERIMENT_DATA
+        experiment.sessions.start(session.session_id)
+        experiment.sessions.stop(session.session_id)
+        wait(experiment.sessions.is_idle)
+        assert experiment.sessions.view().state == State.STOPPED
+    finally:
+        if experiment.sessions.worker:
+            experiment.sessions.worker.join(4)
+        main.dispose()
 
 
 def test_service_enforces_partial_policy(services):
@@ -195,7 +307,7 @@ def test_record_copy_and_restore(services, tmp_path):
     result = experiment.sessions.results.list()[0]
     records = [json.loads(line) for line in open(result["recording_path"], encoding="utf-8")]
     assert records[0]["snapshot"]["definition"]["id"] == "demo-0"
-    assert records[0]["snapshot"]["definition"]["experiment_data"] == DEFAULT_EXPERIMENT_DATA
+    assert records[0]["snapshot"]["definition"]["experiment_data"] == SAMPLE_EXPERIMENT_DATA
     assert len({r["channel_id"] for r in records[1:] if "channel_id" in r}) == 6
     restored_main, restored_experiment = build_services(tmp_path)
     assert len(restored_experiment.sessions.results.list()) == 1
@@ -446,7 +558,6 @@ def test_robot_settings_legacy_patch_restore_snapshot_and_duplicate(services, tm
     assert later.pf_straight_line["start_x"] == -1000
     assert later.pf_straight_line["join_anywhere"] is None
     assert session.snapshot.definition.ar_trapezoidal_step["apply_rate"] == 526.32
-    groups, definitions = fixtures()
     restored = FolderTestRepository(tmp_path / "test")
     assert restored.get(saved.id) == later
     duplicate = main.service.duplicate(later)

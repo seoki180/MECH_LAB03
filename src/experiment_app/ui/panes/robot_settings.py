@@ -4,6 +4,14 @@ from experiment_app.ui.theme import text, input_control, scaled, CONTROL_HEIGHT,
 from .parameter_editor import ParameterEditorPane
 
 
+def read_3state(control):
+    """3상태 체크박스의 값. 미설정은 None으로 돌려준다."""
+    state = control.Get3StateValue()
+    if state == wx.CHK_UNDETERMINED:
+        return None
+    return state == wx.CHK_CHECKED
+
+
 class RobotSettingsPane(ParameterEditorPane):
     def __init__(self, parent, on_patch, section):
         super().__init__(parent, on_patch)
@@ -14,14 +22,21 @@ class RobotSettingsPane(ParameterEditorPane):
             return super().create_field(schema, values, prefix, policy, errors)
         path = prefix + schema.key
         editable = path in policy.editable_paths
-        control = wx.CheckBox(self, label=schema.label)
-        control.SetValue(bool(values.get(path)))
+        value = values.get(path)
+        # 사진의 체크박스 배치를 유지하되 3상태로 둔다. 저장값이 없는 것과 '사용 안 함'은
+        # 뜻이 다르므로 미설정을 해제로 표시하지 않는다.
+        control = wx.CheckBox(self, label=schema.label,
+                             style=wx.CHK_3STATE | wx.CHK_ALLOW_3RD_STATE_FOR_USER)
+        control.Set3StateValue(wx.CHK_UNDETERMINED if value is None else
+                               (wx.CHK_CHECKED if value else wx.CHK_UNCHECKED))
         control.SetBackgroundColour(self.GetBackgroundColour())
         input_control(control)
         control.Enable(editable)
-        control.SetToolTip(schema.help if editable else policy.locked_reason)
+        hint = "미설정(■) · 사용(✓) · 사용 안 함(□)"
+        control.SetToolTip(f"{schema.help}\n{hint}" if editable else policy.locked_reason)
         if editable:
-            control.Bind(wx.EVT_CHECKBOX, lambda event: self.on_patch(path, control.GetValue()))
+            control.Bind(wx.EVT_CHECKBOX,
+                         lambda event: self.on_patch(path, read_3state(control)))
         self.controls[path] = control
         error = text(self, errors.get(path, ""), 12, colour=DANGER)
         self.error_labels[path] = error

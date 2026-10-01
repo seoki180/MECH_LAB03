@@ -1,15 +1,15 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from uuid import uuid4
-from experiment_app.domain.test_definition import AppError, FieldPatch
+from experiment_app.domain.test_definition import (AppError, FieldPatch, new_definition,
+                                                   new_spec_item)
 from .view_models import scenario_model
 
 
 class MainPresenter:
     """Owns draft strings and asynchronous persistence, without any wx dependencies."""
-    def __init__(self, service, new_template):
+    def __init__(self, service):
         self.service = service
-        self.new_template = new_template
         self.definition = None
         self.changes = {}
         self.errors = {}
@@ -112,14 +112,14 @@ class MainPresenter:
 
     def new(self, group_id, duplicate=False):
         self.end_edit()
-        source = self.definition if duplicate else self.new_template
+        source = self.definition if duplicate else None
         # 복제는 시나리오도 따라가야 같은 시험이 된다. 원본 경로를 기억해 두었다가
         # 저장이 끝난 뒤 새 파일 옆으로 복사한다.
         self.scenario_source = (self.service.scenario_path(source.id)
                                 if duplicate and source is not None and source.revision else None)
-        self.definition = self.service.duplicate(source, group_id)
-        if not duplicate:
-            self.definition = replace(self.definition, name="새 시험")
+        # 새 시험은 어떤 값도 미리 채우지 않는다. 복제만 원본 값을 물려받는다.
+        self.definition = (self.service.duplicate(source, group_id) if duplicate and source is not None
+                           else new_definition(group_id))
         self.changes, self.errors, self.structure_dirty = {}, {}, False
         self.scenario = None
 
@@ -131,8 +131,12 @@ class MainPresenter:
         steps = list(self.definition.spec_items)
         index = next((i for i, s in enumerate(steps) if s.id == step_id), 0)
         if operation in {"add", "duplicate"}:
-            source = steps[index] if operation == "duplicate" else self.new_template.spec_items[0]
-            steps.insert(index + 1, replace(source, id=uuid4().hex, name=f"단계 {len(steps) + 1}"))
+            if operation == "duplicate":
+                source = replace(steps[index], id=uuid4().hex, name=f"단계 {len(steps) + 1}")
+            else:
+                # 추가한 단계는 빈 값으로 둔다. 다른 단계의 값을 물려주지 않는다.
+                source = new_spec_item(f"단계 {len(steps) + 1}")
+            steps.insert(index + 1, source)
         elif operation == "delete" and len(steps) > 1:
             removed = steps.pop(index)
             self.changes = {k: v for k, v in self.changes.items() if not k.startswith(f"spec/{removed.id}/")}

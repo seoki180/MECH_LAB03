@@ -13,7 +13,7 @@ import time
 import pytest
 
 from experiment_app.application.session_service import SessionService
-from experiment_app.bootstrap import build_services
+from sample_tests import seeded_services as build_services
 from experiment_app.domain.session import State
 from experiment_app.domain.telemetry import GpsFix, SensorSample
 from experiment_app.infrastructure.sources import SystemClock

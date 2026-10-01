@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from experiment_app.bootstrap import build_services
+from sample_tests import seeded_services as build_services
 from experiment_app.domain.session import State
 from experiment_app.domain.telemetry import displacement
 from experiment_app.infrastructure.nmea import NmeaReplay, parse_inspvaxa

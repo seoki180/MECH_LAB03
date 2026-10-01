@@ -1,14 +1,20 @@
 from dataclasses import dataclass, replace
 from copy import deepcopy
 import math
+from uuid import uuid4
 
 
-DEFAULT_EXPERIMENT_DATA = {
-    "point_angle": {"Zero": [0, -19], "Accel": [22, -8.3], "Brake": [-9.5, -16.6]},
-    "calibration_data": [0.02894060757546641, -13.496798692559123],
-    "limit_point": {"Accel": -0.2, "Brake": -5},
-    "zero_brake_angle": -14,
+# 새 시험의 실험 입력 데이터. 값이 없음을 None으로 둔다. 0은 '측정/설정된 0'과
+# 구별되지 않으므로 빈 값 대신 쓰지 않는다.
+EMPTY_EXPERIMENT_DATA = {
+    "point_angle": {"Zero": [None, None], "Accel": [None, None], "Brake": [None, None]},
+    "calibration_data": [None, None],
+    "limit_point": {"Accel": None, "Brake": None},
+    "zero_brake_angle": None,
 }
+
+# 새 시험의 기본 종류. 저장 형식의 구조 키이며 측정값이나 장비 설정이 아니다.
+DEFAULT_TYPE_ID = "demo"
 
 
 def experiment_data_paths(data):
@@ -98,7 +104,7 @@ class TestDefinition:
         fields = {"name": self.name, "runs": self.runs, "type_id": self.type_id}
         for item in self.spec_items:
             fields.update((f"spec/{item.id}/{k}", v) for k, v in item.values)
-        fields.update(experiment_data_paths(self.experiment_data or DEFAULT_EXPERIMENT_DATA))
+        fields.update(experiment_data_paths(self.experiment_data or EMPTY_EXPERIMENT_DATA))
         from .robot_settings import ROBOT_FIELDS
         for section, schemas in ROBOT_FIELDS.items():
             data = getattr(self, section) or {}
@@ -108,7 +114,7 @@ class TestDefinition:
     def patched(self, changes):
         specs = tuple(replace(s, values=tuple((k, changes.get(f"spec/{s.id}/{k}", v))
                       for k, v in s.values)) for s in self.spec_items)
-        data = deepcopy(self.experiment_data or DEFAULT_EXPERIMENT_DATA)
+        data = deepcopy(self.experiment_data or EMPTY_EXPERIMENT_DATA)
         for path, value in changes.items():
             if path.startswith("data/"):
                 keys = path.split("/")[1:]
@@ -141,4 +147,19 @@ def definition_from_dict(data):
     return TestDefinition(**{**data,
         "spec_items": tuple(SpecItem(**{**s, "values": tuple(tuple(v) for v in s["values"])})
                             for s in data["spec_items"]),
-        "experiment_data": deepcopy(data.get("experiment_data") or DEFAULT_EXPERIMENT_DATA)})
+        "experiment_data": deepcopy(data.get("experiment_data") or EMPTY_EXPERIMENT_DATA)})
+
+
+def new_spec_item(name="단계 1"):
+    """빈 단계 하나. 목표값·시간·사용 여부를 미설정으로 둔다."""
+    return SpecItem(uuid4().hex, name, (("target", None), ("duration", None), ("enabled", None)))
+
+
+def new_definition(group_id="", name="새 시험"):
+    """빈 시험 정의. 어떤 입력값도 미리 채우지 않는다.
+
+    revision 0은 '아직 저장되지 않음'을 뜻한다. 사용자가 값을 넣지 않고 저장해도
+    되며, 검증은 입력한 항목에만 적용된다.
+    """
+    return TestDefinition(uuid4().hex, group_id, 0, DEFAULT_TYPE_ID, name, 1,
+                          (new_spec_item(),), experiment_data=deepcopy(EMPTY_EXPERIMENT_DATA))

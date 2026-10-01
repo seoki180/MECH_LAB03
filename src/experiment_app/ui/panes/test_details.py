@@ -70,7 +70,8 @@ class TestDetailsPane(WheelScrolledPanel):
         self.FitInside()
 
     def render(self, definition, changes, policy, errors, group_label=None,
-               scenario=None, scenario_enabled=True, files_enabled=True):
+               scenario=None, scenario_enabled=True, files_enabled=True, empty_store=False):
+        """empty_store는 시험목록 자체가 없는 상태다. '선택하세요'로는 다음 조치를 알 수 없다."""
         valid = definition is not None
         for control in (self.basic_bar, self.basic, self.spec, self.advanced_toggle, self.mode,
                         self.scenario):
@@ -83,8 +84,13 @@ class TestDetailsPane(WheelScrolledPanel):
         self.summary.Show(not valid)
         self.spec.set_advanced_shown(valid and self.expanded)
         if not valid:
-            self.heading.SetLabel(group_label or "시험을 선택하세요")
-            self.summary.SetLabel("시험목록에서 시험을 선택하거나 추가하세요.")
+            if empty_store:
+                self.heading.SetLabel("시험이 없습니다")
+                self.summary.SetLabel("추가 버튼으로 시험목록을 먼저 만들고, 그 안에 시험을 추가하세요. "
+                                      "이미 있는 시험 폴더는 ‘시험 가져오기’로 들여올 수 있습니다.")
+            else:
+                self.heading.SetLabel(group_label or "시험을 선택하세요")
+                self.summary.SetLabel("시험목록에서 시험을 선택하거나 추가하세요.")
         else:
             values = {**definition.fields(), **changes}
             self.heading.SetLabel(definition.name)

@@ -4,7 +4,7 @@ from threading import Event
 import json
 import time
 import pytest
-from experiment_app.bootstrap import build_services
+from sample_tests import seeded_services as build_services
 from experiment_app.application.robot_service import RobotService
 from experiment_app.domain.robot import RobotEvent
 from experiment_app.domain.session import State

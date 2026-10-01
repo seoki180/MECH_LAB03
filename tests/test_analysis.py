@@ -13,7 +13,7 @@ import json
 import pytest
 
 from experiment_app.application.analysis_service import AnalysisService
-from experiment_app.bootstrap import build_services
+from sample_tests import seeded_services as build_services
 from experiment_app.domain.analysis import Series, analyse, deviation_series, target_at
 from experiment_app.domain.scenario import ScenarioPoint
 from experiment_app.domain.session import State

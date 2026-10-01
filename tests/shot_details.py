@@ -16,12 +16,16 @@ from experiment_app.demo.fixtures import BASIC_FIELDS, STEP_FIELDS, SCENARIOS  #
 from experiment_app.ui.frames.main_frame import MainFrame  # noqa: E402
 from experiment_app.ui.adapters.clipboard import WxClipboard  # noqa: E402
 from experiment_app.infrastructure.tiles import MapPackSet  # noqa: E402
+from sample_tests import seed  # noqa: E402
 
 OUT = ROOT / "artifacts"
 OUT.mkdir(exist_ok=True)
 
 app = wx.App(False)
 main, experiment = build_services(OUT / "shot-data", tests_dir=OUT / "shot-test", duration=10)
+# 앱은 빈 상태로 시작한다. 배치를 보려면 시험이 필요하므로 보조 자료를 넣는다.
+seed(main.service.repository)
+main.select(main.service.repository.list()[0].id)
 tiles, _ = MapPackSet.load(OUT / "shot-maps")
 frame = MainFrame(main, experiment, WxClipboard(), tiles, (BASIC_FIELDS, STEP_FIELDS), SCENARIOS)
 frame.SetClientSize(frame.FromDIP(wx.Size(1280, 800)))

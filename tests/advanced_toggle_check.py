@@ -9,7 +9,7 @@ import wx
 from experiment_app.bootstrap import build_services
 from experiment_app.demo.fixtures import BASIC_FIELDS, STEP_FIELDS
 from experiment_app.domain.edit_policy import EditPolicy
-from experiment_app.domain.test_definition import definition_from_dict
+from experiment_app.domain.test_definition import definition_from_dict, new_definition
 from experiment_app.ui.panes.test_details import TestDetailsPane
 from experiment_app.ui.theme import load_fonts
 
@@ -27,7 +27,8 @@ def check(condition, message):
 app = wx.App(False)
 load_fonts()
 main, _ = build_services(OUTPUT / "toggle-data", duration=5)
-definition = main.service.repository.list()[0]
+# 빈 시험으로 확인한다. advanced 값이 하나도 없어도 토글과 초점 이동이 동작해야 한다.
+definition = new_definition("toggle-group")
 frame = wx.Frame(None)
 frame.SetClientSize(frame.FromDIP((900, 800)))
 pane = TestDetailsPane(frame, (BASIC_FIELDS, STEP_FIELDS), lambda path, value: None, lambda *a: None)

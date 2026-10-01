@@ -69,7 +69,8 @@ class MainFrame(wx.Frame):
                   EditPolicy("readonly", frozenset(), "수정 버튼을 눌러 편집하세요.")) if definition else None
         group_label = self.repository.groups().get(self.selected_group) if not definition else None
         self.tests.details.render(definition, p.changes, policy, p.errors, group_label,
-                                  p.scenario, not p.busy, not p.busy)
+                                  p.scenario, not p.busy, not p.busy,
+                                  empty_store=not self.repository.groups() and not self.repository.list())
         self.tick()
 
     # ------------------------------------------------ 시험 파일과 시험시나리오

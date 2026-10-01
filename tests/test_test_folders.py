@@ -10,12 +10,12 @@ from pathlib import Path
 import pytest
 
 from experiment_app.bootstrap import build_services
-from experiment_app.demo.fixtures import demo_scenario, fixtures
 from experiment_app.domain.scenario import format_scenario_csv, parse_scenario_csv
 from experiment_app.domain.session import State
 from experiment_app.domain.test_definition import AppError, FieldPatch
 from experiment_app.infrastructure.test_folders import (SCENARIO_FILE, TEST_FILE,
                                                         FolderTestRepository, safe_name)
+from sample_tests import sample_definitions, sample_scenario, seed
 
 ASSET_TARGET = (Path(__file__).resolve().parents[1]
                 / "asset" / "UI작업 관련자료" / "데이터 흐름" / "10km_target.csv")
@@ -31,6 +31,8 @@ def scenario_csv(tmp_path):
 @pytest.fixture
 def services(tmp_path):
     main, experiment = build_services(tmp_path, duration=0.16)
+    # 앱은 빈 폴더로 시작하므로 폴더 구조를 확인할 자료를 테스트가 넣는다.
+    seed(main.service.repository)
     yield main, experiment
     if experiment.sessions.worker:
         experiment.sessions.worker.join(4)
@@ -109,7 +111,7 @@ def test_rename_moves_the_whole_profile_folder(services, tmp_path):
     assert new.name == "이름 바뀐 시험"
     assert not old.exists()
     assert (new / TEST_FILE).is_file() and (new / SCENARIO_FILE).is_file()
-    assert len(repository.scenario(saved.id)) == len(demo_scenario())
+    assert len(repository.scenario(saved.id)) == len(sample_scenario())
 
 
 def test_renaming_the_folder_outside_the_app_renames_the_test(services, tmp_path):
@@ -121,7 +123,7 @@ def test_renaming_the_folder_outside_the_app_renames_the_test(services, tmp_path
     repository.reload()
     assert repository.get("demo-0").name == "밖에서 바꾼 이름"
     # 시나리오는 폴더를 따라갔으므로 그대로 읽힌다.
-    assert len(repository.scenario("demo-0")) == len(demo_scenario())
+    assert len(repository.scenario("demo-0")) == len(sample_scenario())
 
 
 def test_failed_save_does_not_rename_the_folder(services, tmp_path):
@@ -271,11 +273,11 @@ def test_flat_layout_migrates_into_profile_folders(tmp_path):
     root = tmp_path / "test"
     group = root / "예전 목록"
     group.mkdir(parents=True)
-    _, definitions = fixtures()
+    definitions = sample_definitions()
     body = {"schema_version": 2, "order": 0, **asdict(definitions[0])}
     (group / "옛날 시험.json").write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
     (group / "옛날 시험.csv").write_text(
-        format_scenario_csv(demo_scenario()), encoding="utf-8", newline="")
+        format_scenario_csv(sample_scenario()), encoding="utf-8", newline="")
 
     repository = FolderTestRepository(root)
     folder = group / "옛날 시험"
@@ -284,7 +286,7 @@ def test_flat_layout_migrates_into_profile_folders(tmp_path):
     assert not (group / "옛날 시험.json").exists() and not (group / "옛날 시험.csv").exists()
     loaded = repository.list()[0]
     assert loaded.name == "옛날 시험"
-    assert len(repository.scenario(loaded.id)) == len(demo_scenario())
+    assert len(repository.scenario(loaded.id)) == len(sample_scenario())
 
 
 def test_set_and_clear_scenario(services, scenario_csv):
@@ -303,7 +305,7 @@ def test_prepare_fixes_the_scenario_and_ignores_later_edits(services, scenario_c
     main, experiment = services
     session = experiment.sessions.prepare("demo-0", 1)
     original = session.snapshot.scenario
-    assert original == demo_scenario()
+    assert original == sample_scenario()
     main.service.set_scenario("demo-0", scenario_csv)
     assert session.snapshot.scenario == original
 
@@ -362,7 +364,7 @@ def test_robot_receives_the_scenario_with_the_configuration(services):
     experiment.sessions.stop(session.session_id)
     assert not deadline_reached
     assert configuration["scenario"][0] == [0.0, 0.0]
-    assert len(configuration["scenario"]) == len(demo_scenario())
+    assert len(configuration["scenario"]) == len(sample_scenario())
 
 
 def test_presenter_scenario_view_model(services):

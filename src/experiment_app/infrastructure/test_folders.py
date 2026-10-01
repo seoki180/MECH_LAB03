@@ -62,15 +62,14 @@ def is_profile(folder):
 class FolderTestRepository:
     """``test/<시험목록>/<시험>/test.json`` 트리를 그대로 읽고 쓰는 저장소."""
 
-    def __init__(self, root, initial_groups=None, initial_tests=None,
-                 legacy_path=None, scenario_factory=None):
+    def __init__(self, root, legacy_path=None):
         self.root = Path(root)
         self.lock = RLock()
         self.fail_save = False
         self.load_errors = []
         self._groups, self._tests, self._folders, self._order = {}, [], {}, {}
         self._migrate_flat()
-        self._seed(initial_groups or {}, initial_tests or [], legacy_path, scenario_factory)
+        self._migrate_legacy_file(legacy_path)
         self.reload()
 
     # ------------------------------------------------------------------ 적재
@@ -104,18 +103,22 @@ class FolderTestRepository:
                     raise AppError("STORAGE_FAILED",
                                    f"예전 시험 자료를 폴더로 옮기지 못했습니다: {error}") from error
 
-    def _seed(self, initial_groups, initial_tests, legacy_path, scenario_factory):
-        """폴더가 비어 있을 때만 기존 저장 파일이나 데모 자료로 한 번 채운다."""
+    def _migrate_legacy_file(self, legacy_path):
+        """예전 단일 파일(.mechlab/tests.json)이 있고 폴더가 비어 있을 때만 한 번 옮긴다.
+
+        데모 자료를 만들어 넣지는 않는다. 시험이 없는 빈 상태는 정상이며, 사용자가
+        시험목록과 시험을 추가하거나 폴더를 가져와서 채운다.
+        """
         try:
             self.root.mkdir(parents=True, exist_ok=True)
             if any(child.is_dir() and not child.name.startswith(".") for child in self.root.iterdir()):
                 return
         except OSError as error:
             raise AppError("STORAGE_FAILED", f"시험 폴더를 열 수 없습니다: {error}") from error
-        groups, tests = dict(initial_groups), list(initial_tests)
         legacy_path = Path(legacy_path) if legacy_path else None
-        if legacy_path and legacy_path.is_file():
-            groups, tests = self._read_legacy(legacy_path)
+        if not legacy_path or not legacy_path.is_file():
+            return
+        groups, tests = self._read_legacy(legacy_path)
         for group_id, name in groups.items():
             group_folder = self.root / safe_name(name or group_id, group_id)
             group_folder.mkdir(parents=True, exist_ok=True)
@@ -123,11 +126,6 @@ class FolderTestRepository:
                 definition = replace(definition, group_id=group_folder.name)
                 folder = self._unique_folder(group_folder, definition.name)
                 self._write_document(folder, definition, order)
-                if scenario_factory is not None:
-                    points = scenario_factory(definition)
-                    if points:
-                        (folder / SCENARIO_FILE).write_text(
-                            format_scenario_csv(points), encoding="utf-8", newline="")
 
     @staticmethod
     def _read_legacy(path):

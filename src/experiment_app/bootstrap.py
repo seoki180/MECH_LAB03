@@ -3,7 +3,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from experiment_app.demo.fixtures import (fixtures, schemas, demo_scenario, CHANNELS,
+from experiment_app.demo.fixtures import (schemas, CHANNELS,
                                           BASIC_FIELDS, STEP_FIELDS, SCENARIOS)
 from experiment_app.infrastructure.test_folders import FolderTestRepository
 from experiment_app.infrastructure.results import LocalResultRepository
@@ -33,10 +33,8 @@ def build_services(data_dir, duration=None, nmea_path=None, robot_transport=None
     # 시험 정의는 실행 파일 밖 test/ 폴더에서 직접 관리한다. 실행 시에는 bootstrap.run()이
     # paths.tests_dir()을 넘기고, 지정이 없으면 저장 폴더 아래를 쓴다.
     tests_dir = Path(tests_dir) if tests_dir else data_dir / "test"
-    groups, definitions = fixtures()
-    repository = FolderTestRepository(tests_dir, groups, definitions,
-                                      legacy_path=data_dir / "tests.json",
-                                      scenario_factory=demo_scenario)
+    # 시험은 사용자가 만들거나 폴더를 가져와서 생긴다. 데모 시험을 미리 넣지 않는다.
+    repository = FolderTestRepository(tests_dir, legacy_path=data_dir / "tests.json")
     test_service = TestService(repository, schemas)
     telemetry = TelemetryService()
     clock = SystemClock()
@@ -50,7 +48,7 @@ def build_services(data_dir, duration=None, nmea_path=None, robot_transport=None
     sessions = SessionService(repository, channels, sensors, gps,
                               lambda: JsonlRecorder(data_dir / "recordings"), telemetry, results, clock, duration,
                               robot=RobotService(robot_transport if robot_transport is not None else DemoRobotTransport(clock), clock))
-    main_presenter = MainPresenter(test_service, definitions[0])
+    main_presenter = MainPresenter(test_service)
     # 결과 그래프는 기록 파일을 다시 읽어 그린다. 채널은 sessions에서 읽으므로
     # 장치 탭에서 NMEA 파일을 바꿔도 라벨·단위가 화면과 어긋나지 않는다.
     analysis = AnalysisService(results, sessions)

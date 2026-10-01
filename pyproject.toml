@@ -20,5 +20,5 @@ maptools = ["rio-tiler>=7", "morecantile>=5"]
 where = ["src"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 testpaths = ["tests"]
