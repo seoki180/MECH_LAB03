@@ -17,7 +17,7 @@ class TestsPage(wx.Panel):
         self.tree_card, self.tree = card(self, lambda parent: TestTreePane(parent, on_select, on_reorder))
         self.tree_card.SetMinSize(self.FromDIP((scaled(280), -1)))
         self.details_card, self.details = card(
-            self, lambda parent: TestDetailsPane(parent, fields, on_patch, file_commands), scrollable=True)
+            self, lambda parent: TestDetailsPane(parent, fields, on_patch, file_commands))
         self.body.Add(self.tree_card, 3, wx.EXPAND | wx.RIGHT, self.FromDIP(12))
         self.body.Add(self.details_card, 7, wx.EXPAND)
         root.Add(self.body, 1, wx.EXPAND | wx.ALL, self.FromDIP(12))

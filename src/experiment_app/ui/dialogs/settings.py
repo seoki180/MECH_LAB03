@@ -20,7 +20,7 @@ class SettingsDialog(wx.Dialog):
         body.SetSizer(content)
         body.SetupScrolling(scroll_x=False, rate_y=16)
         body.bind_wheel_children()
-        root.Add(body.with_scrollbar(), 1, wx.EXPAND)
+        root.Add(body, 1, wx.EXPAND)
         add(root, button(self, "닫기", lambda: self.EndModal(wx.ID_CLOSE)), border=12)
         self.SetSizer(root)
         self.CentreOnParent()

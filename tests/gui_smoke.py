@@ -385,8 +385,14 @@ def start():
     check(frame.tests.details.IsShown(), "Tests detail visible")
     capture(frame, "main-1280")
     details = frame.tests.details
+    check(list(details.GetParent().GetChildren()) == [details],
+          "Test details uses its own native scrollbar without a sibling overlay/control")
     check(details.GetVirtualSize().height > details.GetClientSize().height,
           "Test details has overflowing content")
+    details.Scroll(0, details.GetVirtualSize().height)
+    wx.Yield()
+    check(details.GetScreenRect().Contains(details.advanced_toggle.GetScreenRect()),
+          "The bottom control is fully reachable at the end of the details scroll range")
     details.Scroll(0, 0)
     spin_wheel(details.heading, -1)
     check(details.GetViewStart()[1] > 0,

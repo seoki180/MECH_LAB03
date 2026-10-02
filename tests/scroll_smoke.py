@@ -9,6 +9,8 @@ content = wx.BoxSizer(wx.VERTICAL)
 label = wx.StaticText(panel, label="Scroll event probe")
 content.Add(label)
 content.AddSpacer(2400)
+footer = wx.TextCtrl(panel, value="Last input must remain reachable")
+content.Add(footer, 0, wx.EXPAND)
 panel.SetSizer(content)
 panel.SetupScrolling(scroll_x=False, rate_y=16)
 root = wx.BoxSizer(wx.VERTICAL)
@@ -46,58 +48,26 @@ try:
     wheel(-120)
     assert panel.GetViewStart()[1] == split
     print("PASS: fractional wheel input, single dispatch, direction and top boundary")
-    root.Detach(panel)
-    root.Add(panel.with_scrollbar(), 1, wx.EXPAND)
-    frame.Layout()
-    wx.Yield()
-    bar = panel.scrollbar
-    assert bar is not None
-    assert bar.ToDIP(bar.GetSize()).width == 48, "Scrollbar must have a 48 DIP hit target"
-    bar.SetFocus()
-    event = wx.KeyEvent(wx.wxEVT_KEY_DOWN)
-    event.SetKeyCode(wx.WXK_END)
-    bar.GetEventHandler().ProcessEvent(event)
-    wx.Yield()
-    maximum = panel.GetVirtualSize().height - panel.GetClientSize().height
-    assert abs(panel.GetViewStart()[1] - maximum) <= 1
-    event.SetKeyCode(wx.WXK_HOME)
-    bar.GetEventHandler().ProcessEvent(event)
-    assert panel.GetViewStart()[1] == 0
-    assert bar.thumb_rect().height >= bar.FromDIP(48)
-    bar.Refresh()
-    bar.Update()
-    print("PASS: scrollbar width, thumb minimum, Home/End and native paint")
-    down = wx.MouseEvent(wx.wxEVT_LEFT_DOWN)
-    down.SetPosition(wx.Point(24, 10))
-    bar.GetEventHandler().ProcessEvent(down)
-    assert bar.HasCapture()
-    motion = wx.MouseEvent(wx.wxEVT_MOTION)
-    motion.SetLeftDown(True)
-    motion.SetPosition(wx.Point(24, bar.GetClientSize().height + 100))
-    bar.GetEventHandler().ProcessEvent(motion)
-    assert abs(panel.GetViewStart()[1] - maximum) <= 1
-    up = wx.MouseEvent(wx.wxEVT_LEFT_UP)
-    bar.GetEventHandler().ProcessEvent(up)
-    assert not bar.HasCapture()
-    event.SetKeyCode(wx.WXK_HOME)
-    bar.GetEventHandler().ProcessEvent(event)
-    down.SetPosition(wx.Point(24, bar.GetClientSize().height - 1))
-    bar.GetEventHandler().ProcessEvent(down)
-    assert panel.GetViewStart()[1] == panel.GetClientSize().height
-    assert not bar.HasCapture()
-    for _ in range(3):
-        panel.SetClientSize(wx.Size(panel.GetClientSize().width, 240))
+    assert list(frame.GetChildren()) == [panel], "Do not add a sibling scrollbar or overlay"
+    for size in (wx.Size(480, 360), wx.Size(360, 240), wx.Size(640, 480)):
+        frame.SetClientSize(size)
+        frame.Layout()
         panel.FitInside()
         wx.Yield()
-        assert bar.extent == panel.GetVirtualSize().height
-        assert bar.viewport == panel.GetClientSize().height
+        maximum = panel.GetVirtualSize().height - panel.GetClientSize().height
+        event = wx.ScrollWinEvent(wx.wxEVT_SCROLLWIN_THUMBTRACK, maximum, wx.VERTICAL)
+        panel.GetEventHandler().ProcessEvent(event)
+        wx.Yield()
+        assert abs(panel.GetViewStart()[1] - maximum) <= 1
+        rect = wx.Rect(panel.ClientToScreen(wx.Point(0, 0)), panel.GetClientSize())
+        assert rect.Contains(footer.GetScreenRect()), "Bottom input is clipped"
     content.Clear(False)
+    footer.Hide()
     content.Add(label)
     panel.FitInside()
     wx.Yield()
     assert panel.GetViewStart()[1] == 0
-    assert bar.extent <= bar.viewport
-    print("PASS: thumb drag/clamp, release, page click, resize and shrinking content")
+    print("PASS: native thumb events, bottom input visibility, resize and content shrink")
 finally:
     frame.Destroy()
     wx.Yield()

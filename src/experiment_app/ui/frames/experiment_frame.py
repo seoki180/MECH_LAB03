@@ -55,7 +55,7 @@ class ExperimentFrame(wx.Frame):
         self.body.SetSizer(self.body_sizer)
         self.body.SetupScrolling(scroll_x=False, rate_y=16)
         self.bind_body_scroll()
-        root.Add(self.body.with_scrollbar(), 1, wx.EXPAND)
+        root.Add(self.body, 1, wx.EXPAND)
         self.SetSizer(root)
         self.CreateStatusBar()
         self.timer = wx.Timer(self)

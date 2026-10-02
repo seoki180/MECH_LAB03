@@ -12,7 +12,7 @@
 """
 import wx
 from wx.lib.scrolledpanel import ScrolledPanel
-from experiment_app.ui.components.touch_scrollbar import TouchScrollbar
+from experiment_app.ui.theme import SCROLLBAR_WIDTH, SCROLLBAR_THUMB_MIN
 
 # 이 거리(DIP)를 넘겨 끌면 눌림이 아니라 스크롤로 본다. 태블릿에서 손가락은
 # 버튼을 누를 때도 몇 픽셀 흔들린다.
@@ -27,8 +27,8 @@ class WheelScrolledPanel(ScrolledPanel):
         self._drag_from = None
         self._dragging = False
         self._bind_scroll_input(self)
-        self.scrollbar = None
-        self._scroll_sizer = None
+        self._native_scrollbar = None
+        self._native_attempted = False
 
     def SetupScrolling(self, scroll_x=True, scroll_y=True, rate_x=20, rate_y=20,
                        scrollToTop=True, scrollIntoView=True):
@@ -36,32 +36,26 @@ class WheelScrolledPanel(ScrolledPanel):
         self._wheel_line_pixels = self.FromDIP(rate_y)
         super().SetupScrolling(scroll_x, scroll_y, rate_x, 1 if rate_y else 0,
                                scrollToTop, scrollIntoView)
+        if wx.Platform == "__WXMSW__" and not self._native_attempted:
+            self._native_attempted = True
+            from experiment_app.ui.adapters.nonclient_scrollbar import NonClientScrollbar
+            try:
+                self._native_scrollbar = NonClientScrollbar(
+                    self.GetHandle(), lambda position: self.Scroll(-1, position),
+                    width_dip=SCROLLBAR_WIDTH, thumb_dip=SCROLLBAR_THUMB_MIN)
+            except (OSError, AttributeError) as error:
+                wx.LogWarning(f"스크롤바 확대를 적용하지 못해 기본 스크롤바를 사용합니다: {error}")
+            else:
+                self.Bind(wx.EVT_IDLE, self._refresh_native_scrollbar)
 
-    def with_scrollbar(self):
-        """Add this sizer, rather than the panel, to its parent's layout."""
-        if self._scroll_sizer is None:
-            self.ShowScrollbars(wx.SHOW_SB_NEVER, wx.SHOW_SB_NEVER)
-            self.scrollbar = TouchScrollbar(self.GetParent(), self._scroll_to_pixel,
-                                           self._child_wheel)
-            self._scroll_sizer = wx.BoxSizer(wx.HORIZONTAL)
-            self._scroll_sizer.Add(self, 1, wx.EXPAND)
-            self._scroll_sizer.Add(self.scrollbar, 0, wx.EXPAND)
-            self.Bind(wx.EVT_IDLE, self._sync_scrollbar)
-        return self._scroll_sizer
-
-    def _scroll_to_pixel(self, position):
-        unit = self.GetScrollPixelsPerUnit()[1]
-        if unit:
-            maximum = max(0, self.GetVirtualSize().height - self.GetClientSize().height)
-            self.Scroll(-1, round(max(0, min(position, maximum)) / unit))
-            self._sync_scrollbar()
-
-    def _sync_scrollbar(self, event=None):
-        if self.scrollbar:
-            self.scrollbar.render(self.GetViewStart()[1] * self.GetScrollPixelsPerUnit()[1],
-                                  self.GetClientSize().height, self.GetVirtualSize().height)
-        if event:
-            event.Skip()
+    def _refresh_native_scrollbar(self, event):
+        try:
+            self._native_scrollbar.refresh()
+        except OSError as error:
+            self._native_scrollbar.dispose()
+            self.Unbind(wx.EVT_IDLE, handler=self._refresh_native_scrollbar)
+            wx.LogWarning(f"스크롤바 갱신에 실패해 기본 스크롤바로 복원합니다: {error}")
+        event.Skip()
 
     def bind_wheel_children(self, exclude=()):
         """Call after building or replacing controls inside the scrolling area."""
