@@ -68,6 +68,21 @@ def run(report=None):
     # 5. NMEA는 없으면 앱이 안내와 함께 멈추므로 상태만 보고한다.
     notes.append(f"NMEA: {paths.default_nmea() or '없음 — nmea 폴더에 .nmea를 넣으세요'}")
 
+    # 6. LAN 실시간 수신이 쓰는 websockets가 번들에 들어갔는지. PyInstaller는
+    # hiddenimports를 찾지 못해도 ERROR 로그만 남기고 빌드를 성공으로 끝내므로,
+    # 여기서 확인하지 않으면 사용자가 LAN 모드를 켤 때까지 모른다.
+    try:
+        import websockets.sync.client  # noqa: F401
+        from websockets.version import version as websockets_version
+        check(True, f"LAN 수신용 websockets {websockets_version} 사용 가능")
+    except ImportError as error:
+        check(False, f"LAN 수신용 websockets 없음 — LAN 실시간 모드를 쓸 수 없습니다 ({error})")
+
+    # 7. 장비 공개 인증서는 실행 파일 옆에 두는 배포 자료다. 없어도 앱은 동작하므로
+    # (파일 재생 모드) 실패로 보지 않고 상태만 알린다.
+    certificate = paths.external_root() / "hi-edge-ui-cert.pem"
+    notes.append(f"LAN 인증서: {certificate if certificate.is_file() else f'없음 — {certificate} 에 두세요'}")
+
     lines = list(notes)
     lines.append(json.dumps({k: str(v) for k, v in info.items()}, ensure_ascii=False, indent=2))
     lines += [("  OK  " if ok else "  실패 ") + message for ok, message in results]

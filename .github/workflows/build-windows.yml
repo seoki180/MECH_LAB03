@@ -30,7 +30,7 @@ jobs:
         #
         # uv pip install --system은 쓰지 않는다. 러너의 시스템 Python은 PEP 668로
         # 보호돼 있어 externally-managed-environment 오류로 실패한다.
-        run: python -m pip install --upgrade pip pytest
+        run: python -m pip install --upgrade pip pytest websockets==15.0.1
       - name: 비 GUI 테스트
         env:
           PYTHONPATH: src
@@ -51,9 +51,12 @@ jobs:
           python-version: "3.14"
 
       - name: 의존성 설치
+        # 런타임 의존성은 pyproject.toml과 같은 목록을 유지한다. 여기에 빠지면
+        # PyInstaller가 패키지를 찾지 못해 hiddenimports가 소용없고, 빌드는
+        # 성공한 채로 실행 시점에 ModuleNotFoundError가 난다.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install wxPython==4.3.1 pyinstaller==6.22.3 pytest
+          python -m pip install wxPython==4.3.1 websockets==15.0.1 pyinstaller==6.22.3 pytest
 
       - name: 전체 테스트
         # Windows 러너에는 wx가 설치돼 있어 UI 계층까지 import된다.

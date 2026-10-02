@@ -14,6 +14,19 @@ from pathlib import Path
 # SPECPATH는 PyInstaller가 넣어주는 이 spec 파일의 폴더다.
 ROOT = Path(SPECPATH).resolve().parent
 
+# hiddenimports에 적어도 패키지가 설치돼 있지 않으면 PyInstaller는 ERROR 로그만
+# 남기고 **빌드를 성공으로 끝낸다**. 그러면 실행 시점에야 ModuleNotFoundError가 나고,
+# 사용자에게는 'LAN 모드만 안 됨'으로 보인다. 분석을 시작하기 전에 끊는다.
+for module in ("websockets.sync.client",):
+    try:
+        __import__(module)
+    except ImportError as error:
+        raise SystemExit(
+            f"빌드 환경에 런타임 의존성이 없습니다: {module} ({error})\n"
+            f"pyproject.toml의 dependencies를 설치한 환경에서 빌드하세요.\n"
+            f"  python -m pip install websockets==15.0.1"
+        )
+
 analysis = Analysis(
     # __main__.py가 아니라 이 진입 스크립트를 쓴다. 이유는 packaging/entry.py 설명 참고.
     [str(ROOT / "packaging" / "entry.py")],
@@ -27,10 +40,24 @@ analysis = Analysis(
     hiddenimports=["websockets", "websockets.sync.client"],
     hookspath=[],
     runtime_hooks=[],
-    # 앱은 네트워크를 쓰지 않고 wx만 의존한다. 테스트·빌드 전용 패키지는 빼서 크기를 줄인다.
+    # 테스트·빌드 전용 패키지는 빼서 크기를 줄인다. websockets는 LAN 실시간 수신에
+    # 쓰므로 제외하지 않는다.
     excludes=["pytest", "rio_tiler", "morecantile", "tkinter", "numpy", "PIL"],
     noarchive=False,
 )
+
+# hiddenimports에 적어도 패키지가 설치돼 있지 않으면 PyInstaller는 ERROR 로그만
+# 남기고 **빌드를 성공으로 끝낸다**. 그러면 실행 시점에야 ModuleNotFoundError가 나고,
+# 사용자에게는 'LAN 모드만 안 됨'으로 보인다. 빌드 환경에서 먼저 끊는다.
+for module in ("websockets.sync.client",):
+    try:
+        __import__(module)
+    except ImportError as error:
+        raise SystemExit(
+            f"빌드 환경에 런타임 의존성이 없습니다: {module} ({error})\n"
+            f"pyproject.toml의 dependencies를 설치한 환경에서 빌드하세요.\n"
+            f"  python -m pip install websockets==15.0.1"
+        )
 pyz = PYZ(analysis.pure)
 
 exe = EXE(
