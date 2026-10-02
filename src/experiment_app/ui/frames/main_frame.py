@@ -426,6 +426,9 @@ class MainFrame(wx.Frame):
         except AppError as error:
             self.error(error)
             return False
+        # 적용은 됐지만 다음 실행까지 남기지 못한 경우를 숨기지 않는다.
+        if getattr(self.experiment_presenter, "save_error", "") and self.settings_dialog:
+            self.settings_dialog.devices.show_save_error(self.experiment_presenter.save_error)
         return True
 
     def probe_lan(self, settings, done):

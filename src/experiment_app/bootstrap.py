@@ -10,6 +10,8 @@ from experiment_app.infrastructure.sources import FakeSensorSource, FakeGpsSourc
 from experiment_app.infrastructure.nmea import NMEA_CHANNELS, NmeaReplay, NmeaSensorSource, NmeaGpsSource
 from experiment_app.infrastructure.recording import JsonlRecorder
 from experiment_app.infrastructure.tiles import MapPackSet
+from experiment_app.infrastructure.settings_store import SettingsStore
+from experiment_app.infrastructure import hiedge
 from experiment_app.application.test_service import TestService
 from experiment_app.application.robot_service import RobotService
 from experiment_app.infrastructure.robot import DemoRobotTransport
@@ -59,7 +61,11 @@ def build_services(data_dir, duration=None, nmea_path=None, robot_transport=None
     # 장치 탭에서 NMEA 파일을 바꿔도 라벨·단위가 화면과 어긋나지 않는다.
     analysis = AnalysisService(results, sessions)
     experiment_presenter = ExperimentPresenter(sessions, telemetry, CopyService(clock), clock,
-                                               nmea_sources, nmea_path, analysis, lan_sources)
+                                               nmea_sources, nmea_path, analysis, lan_sources,
+                                               settings_store=SettingsStore(data_dir / "settings.json"),
+                                               lan_defaults={"host": hiedge.DEFAULT_HOST,
+                                                             "port": hiedge.DEFAULT_PORT,
+                                                             "verify": True, "certificate": None})
     return main_presenter, experiment_presenter
 
 

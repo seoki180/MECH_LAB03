@@ -70,7 +70,13 @@ class DevicesPage(wx.Panel):
         add(root, self.skip_verify, border=16)
         add(root, text(self, f"공개 인증서 위치: {hiedge.certificate_path()}", 12, colour=MUTED), border=16)
         self.probe_button = button(self, "연결 시험", self.run_probe)
-        add(root, self.probe_button, border=16, flags=wx.ALL | wx.ALIGN_LEFT)
+        # 주소를 고쳐도 적용 경로가 없으면 화면 값과 실제 접속 주소가 어긋난다.
+        # LAN 모드에서 주소를 바꾼 뒤 누르면 즉시 반영하고 다음 실행까지 남긴다.
+        self.apply_button = button(self, "주소 적용", self.apply_address)
+        buttons = wx.BoxSizer(wx.HORIZONTAL)
+        buttons.Add(self.apply_button, 0, wx.RIGHT, self.FromDIP(8))
+        buttons.Add(self.probe_button, 0)
+        root.Add(buttons, 0, wx.ALL | wx.ALIGN_LEFT, self.FromDIP(16))
         self.probe_result = text(self, "시험하지 않았습니다.", 13, colour=MUTED)
         add(root, self.probe_result, border=16)
 
@@ -93,7 +99,7 @@ class DevicesPage(wx.Panel):
         self.source_label.SetLabel("LAN 실시간 수신 (HI-EDGE)" if lan else "NMEA 파일 재생")
         self.nmea_button.Enable(not lan)
         self.file_label.Enable(not lan)
-        for control in (self.host, self.port, self.skip_verify, self.probe_button):
+        for control in (self.host, self.port, self.skip_verify, self.probe_button, self.apply_button):
             control.Enable(lan)
         self.Layout()
 
@@ -111,6 +117,30 @@ class DevicesPage(wx.Panel):
         else:
             self.mode.SetSelection(self.MODES.index("lan" if wanted == "nmea" else "nmea"))
         self.Layout()
+
+    def apply_address(self, event):
+        """LAN 모드에서 고친 주소를 즉시 반영한다.
+
+        모드 전환과 같은 on_mode 경로를 쓴다. 거부되면(실험 창이 열려 있음) 이유를
+        보여주고 값을 바꾸지 않는다.
+        """
+        if self.on_mode is None:
+            return
+        values = self.lan_values()
+        if self.on_mode("lan", values):
+            self.probe_result.SetLabel(f"적용되었습니다 · {values['host']}:{values['port']} · 시작할 때 연결합니다.")
+            self.probe_result.SetForegroundColour(MUTED)
+        else:
+            self.probe_result.SetLabel("실험 창이 열려 있어 주소를 바꿀 수 없습니다. 실험을 닫고 다시 적용하세요.")
+            self.probe_result.SetForegroundColour(DANGER)
+        self.Layout()
+
+    def show_save_error(self, message):
+        """주소는 적용됐지만 다음 실행까지 남기지 못한 경우를 알린다."""
+        if message:
+            self.probe_result.SetLabel(message)
+            self.probe_result.SetForegroundColour(DANGER)
+            self.Layout()
 
     def lan_values(self):
         try:

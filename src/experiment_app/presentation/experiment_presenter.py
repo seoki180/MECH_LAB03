@@ -5,7 +5,7 @@ from .view_models import metric_model
 
 class ExperimentPresenter:
     def __init__(self, sessions, telemetry, copier, clock, nmea_sources=None, nmea_path=None,
-                 analysis=None, lan_sources=None):
+                 analysis=None, lan_sources=None, settings_store=None, lan_defaults=None):
         self.sessions, self.telemetry, self.copier, self.clock = sessions, telemetry, copier, clock
         self.nmea_sources, self.nmea_path = nmea_sources, nmea_path
         self.analysis = analysis
@@ -14,7 +14,13 @@ class ExperimentPresenter:
         # 표시해야 하고 세션은 무엇이 꽂혔는지 모르기 때문이다.
         self.lan_sources = lan_sources
         self.source_mode = "nmea"
-        self.lan_settings = {}
+        # 주소는 현장마다 다르다(169.254 자동 구성, 192.168.33 직결 등). 지난 실행에서
+        # 쓰던 값을 불러와 매번 다시 입력하지 않게 한다. 기본값은 bootstrap이 준다
+        # (presentation이 infrastructure를 직접 import하지 않는다).
+        self.settings_store = settings_store
+        defaults = dict(lan_defaults or {"host": "", "port": 8443, "verify": True, "certificate": None})
+        self.lan_settings = settings_store.lan(defaults) if settings_store else defaults
+        self.save_error = ""
         self.visible = {"B": ("B.0", "B.1"), "C": ("C.0", "C.1")}
 
     def analyse(self, session_id):
@@ -36,14 +42,33 @@ class ExperimentPresenter:
 
         소켓은 여기서 열지 않는다. 세션 시작 시 ``prepare()`` 가 연결하므로, 설정만
         바꿔 두고 연결 성패는 시작 시점이나 '연결 시험'에서 확인한다.
+
+        이미 LAN 모드일 때 다시 불러도 된다. 주소를 고쳐 적용하는 경로가 이것이다.
         """
         if self.lan_sources is None:
             raise AppError("VALIDATION_FAILED", "LAN 소스 구성이 없습니다.")
         settings = {"host": host, "port": port, "verify": verify, "certificate": certificate}
         channels, sensors, gps = self.lan_sources(**settings)
+        # set_sources가 거부하면(실험 창이 열려 있음) 설정을 바꾸지 않는다. 화면에만
+        # 새 주소가 남고 실제로는 옛 주소로 접속하는 상태를 만들지 않는다.
         self.sessions.set_sources(channels, sensors, gps)
         self.lan_settings = settings
         self.source_mode = "lan"
+        self.remember_lan(settings)
+
+    def remember_lan(self, settings):
+        """다음 실행에서도 쓰도록 주소를 남긴다.
+
+        저장 실패가 '적용'을 되돌리지는 않는다. 이번 실행에는 이미 반영됐기 때문이다.
+        대신 사실대로 알리고(save_error) 화면이 그것을 보여준다.
+        """
+        self.save_error = ""
+        if self.settings_store is None:
+            return
+        try:
+            self.settings_store.save_lan(settings)
+        except OSError as error:
+            self.save_error = f"주소를 저장하지 못해 다음 실행에는 남지 않습니다: {error}"
 
     def use_nmea(self):
         """다시 파일 재생으로 돌린다. 선택된 파일이 없으면 거부한다."""
