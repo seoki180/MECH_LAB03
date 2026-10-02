@@ -186,9 +186,14 @@ class NonClientScrollbar:
         result = default()
         if message in (WM_DPICHANGED_AFTERPARENT, WM_THEMECHANGED):
             self.api.reframe(self.hwnd)
-        if message in (WM_NCPAINT, WM_NCACTIVATE, WM_PAINT, WM_SIZE,
-                       WM_DPICHANGED_AFTERPARENT, WM_THEMECHANGED):
+        if message in (WM_NCPAINT, WM_NCACTIVATE, WM_DPICHANGED_AFTERPARENT, WM_THEMECHANGED):
+            # OS가 방금 비클라이언트 영역을 지웠으니 변화 여부와 무관하게 다시 그린다.
             self.refresh(force=True)
+        elif message in (WM_PAINT, WM_SIZE):
+            # 클라이언트 영역 리페인트(센서 값 갱신 등)는 비클라이언트 띠와 무관하다.
+            # geometry()가 이미 크기 변화를 반영하므로 바뀌었을 때만 다시 그려
+            # 매 WM_PAINT마다 깜빡이지 않게 한다.
+            self.refresh()
         return result
 
     def dispose(self, destroying=False):
