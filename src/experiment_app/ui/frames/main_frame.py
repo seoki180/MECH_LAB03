@@ -1,4 +1,5 @@
 import wx
+from threading import Thread
 from experiment_app.domain.session import State, ACTIVE, LABELS
 from experiment_app.domain.test_definition import AppError
 from experiment_app.domain.edit_policy import EditPolicy
@@ -181,7 +182,9 @@ class MainFrame(wx.Frame):
             return
         self.settings_dialog = SettingsDialog(self, self.scenarios, self.set_scenario,
                                               self.select_nmea, self.experiment_presenter.nmea_path,
-                                              self.sessions.scenario)
+                                              self.sessions.scenario, self.set_source_mode,
+                                              self.probe_lan, self.experiment_presenter.source_mode,
+                                              self.experiment_presenter.lan_settings)
         try:
             self.settings_dialog.ShowModal()
         finally:
@@ -406,6 +409,47 @@ class MainFrame(wx.Frame):
             return False
         return True
 
+    def set_source_mode(self, mode, settings):
+        """센서·GPS 입력원을 바꾼다. 적용되면 True.
+
+        실험 창이 열려 있으면 거부한다. 수집 중에 소스를 갈아끼우면 한 세션의 기록에
+        서로 다른 출처의 자료가 섞인다.
+        """
+        if self.experiment:
+            self.error(AppError("INVALID_STATE", "실험 창을 닫은 뒤 입력원을 바꾸세요."))
+            return False
+        try:
+            if mode == "lan":
+                self.experiment_presenter.use_lan(**settings)
+            else:
+                self.experiment_presenter.use_nmea()
+        except AppError as error:
+            self.error(error)
+            return False
+        return True
+
+    def probe_lan(self, settings, done):
+        """LAN 연결을 한 번 확인한다. 소켓 I/O는 작업 스레드에서 돌린다."""
+        from experiment_app.infrastructure import hiedge
+
+        def work():
+            try:
+                summary = hiedge.probe(settings["host"], settings["port"], verify=settings["verify"])
+                ok, message = True, summary
+            except AppError as error:
+                ok, message = False, f"{error.code}: {error}"
+            except Exception as error:
+                ok, message = False, f"{type(error).__name__}: {error}"
+            # 대화상자가 닫힌 뒤 도착할 수 있다. 호출부가 살아 있는지 확인한다.
+            wx.CallAfter(self._probe_done, done, ok, message)
+
+        Thread(target=work, name="mechlab-lan-probe", daemon=True).start()
+
+    def _probe_done(self, done, ok, message):
+        if self.disposed or self.settings_dialog is None:
+            return
+        done(ok, message)
+
     def tick(self, event=None):
         if self.disposed:
             return
@@ -419,6 +463,7 @@ class MainFrame(wx.Frame):
             self.header.render("실험 " + LABELS[session.state], tone)
         else:
             self.header.render("실험 창 닫힘")
+        show_changed = self.header.buttons["show"].IsShown() != bool(self.experiment)
         for key, control in self.header.buttons.items():
             control.Show(True if key != "show" else bool(self.experiment))
         self.header.buttons["save"].Enable((p.editing or (p.definition is not None and p.definition.revision == 0))
@@ -434,8 +479,13 @@ class MainFrame(wx.Frame):
         self.header.buttons["delete"].Enable(bool(p.definition or self.selected_group) and not p.busy)
         self.header.buttons["add"].Enable(not p.busy)
         self.tests.Enable(not p.busy)
-        self.header.Layout()
-        self.Layout()
+        # Show()/Hide()만 레이아웃을 바꾼다. Enable()은 그리지 않으므로 여기서
+        # 뺀다. 매 tick(10Hz)마다 조건 없이 Layout()을 부르면 TestTreePane 등
+        # 자식 스크롤 패널에 불필요한 WM_SIZE가 반복돼 네이티브 스크롤바가
+        # 깜빡인다.
+        if show_changed:
+            self.header.Layout()
+            self.Layout()
         self.SetStatusText("저장 중…" if p.busy else ("입력 오류가 있습니다. 빨간 안내가 붙은 항목을 고치세요." if p.errors else
                            ("수정했지만 아직 저장하지 않았습니다." if p.dirty else
                             ("시험시나리오 CSV를 읽을 수 없습니다. 파일을 고치거나 비운 뒤 시작하세요."
