@@ -65,15 +65,19 @@ class StreamingSensorSource:
         self.connect()
         self.connected = True
 
-    def read(self, session_id, elapsed, sequence, scenario):
-        """지금까지 도착한 표본을 모두 꺼낸다. 없으면 빈 tuple."""
+    def _drain(self):
+        """큐에 쌓인 것을 모두 꺼낸다. 하위 구현이 변환을 끼울 때 쓴다."""
         with self._lock:
             if not self._queue:
                 return ()
             batch = tuple(self._queue)
             self._queue.clear()
+            return batch
+
+    def read(self, session_id, elapsed, sequence, scenario):
+        """지금까지 도착한 표본을 모두 꺼낸다. 없으면 빈 tuple."""
         # 세션이 시작되기 전에 남아 있던 표본이 섞이지 않게 현재 세션 것만 남긴다.
-        return tuple(s for s in batch if s.session_id in (session_id, None))
+        return tuple(s for s in self._drain() if s.session_id in (session_id, None))
 
     def close(self):
         try:

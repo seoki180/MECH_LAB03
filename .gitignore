@@ -30,3 +30,12 @@ asset/*.hwp
 # SQLite 임시 파일. 타일팩을 읽는 중에 생겼다 사라진다.
 *.mbtiles-journal
 *.mbtiles-wal
+
+.DS_Store
+
+# 장비 공개 인증서는 실행 파일 옆에 두는 배포 자료다. 장비마다 다르고 교체되므로
+# 저장소가 아니라 장비 담당자에게서 받는다. (hiedge.CERT_NAME)
+hi-edge-ui-cert.pem
+
+# 참고용 안내 문서는 저장소 밖에서 공유한다.
+asset/*.pdf

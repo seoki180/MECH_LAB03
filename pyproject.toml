@@ -2,7 +2,7 @@
 name = "mechlab-03"
 version = "0.1.0"
 requires-python = ">=3.14"
-dependencies = ["wxPython==4.3.1"]
+dependencies = ["wxPython==4.3.1", "websockets==15.0.1"]
 
 [build-system]
 requires = ["setuptools>=77"]

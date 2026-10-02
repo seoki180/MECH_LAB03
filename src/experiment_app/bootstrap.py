@@ -44,6 +44,13 @@ def build_services(data_dir, duration=None, nmea_path=None, robot_transport=None
 
     channels, sensors, gps = nmea_sources(nmea_path) if nmea_path else (
         CHANNELS, FakeSensorSource(CHANNELS, clock), FakeGpsSource(clock))
+
+    def lan_sources(host, port, verify=True, certificate=None):
+        """HI-EDGE LAN 스트림 소스. import를 여기서 하는 이유는 websockets가 없는
+        환경에서도 앱이 시작되어야 하고, 부재는 선택 시점에 알려야 하기 때문이다."""
+        from experiment_app.infrastructure.hiedge import build_sources
+        return build_sources(clock, host, port, certificate, verify)
+
     sessions = SessionService(repository, channels, sensors, gps,
                               lambda: JsonlRecorder(data_dir / "recordings"), telemetry, results, clock, duration,
                               robot=RobotService(robot_transport if robot_transport is not None else DemoRobotTransport(clock), clock))
@@ -52,7 +59,7 @@ def build_services(data_dir, duration=None, nmea_path=None, robot_transport=None
     # 장치 탭에서 NMEA 파일을 바꿔도 라벨·단위가 화면과 어긋나지 않는다.
     analysis = AnalysisService(results, sessions)
     experiment_presenter = ExperimentPresenter(sessions, telemetry, CopyService(clock), clock,
-                                               nmea_sources, nmea_path, analysis)
+                                               nmea_sources, nmea_path, analysis, lan_sources)
     return main_presenter, experiment_presenter
 
 

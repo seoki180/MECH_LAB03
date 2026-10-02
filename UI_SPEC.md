@@ -262,7 +262,9 @@ project/
 │   │   ├── copy_service.py        # 복사할 텍스트 구성
 │   │   └── result_service.py
 │   ├── infrastructure/
-│   │   ├── streaming.py         # push 소스 공통부 (WebSocket 연동 자리)
+│   │   ├── streaming.py         # push 소스 공통부 (큐 + 수명 계약)
+│   │   ├── hiedge.py            # HI-EDGE LAN WebSocket 속도 스트림 수신
+│   │   ├── nmea.py              # INSPVAXA .nmea 파일 재생
 │   │   ├── test_folders.py       # test/<시험목록>/<시험>/ (test.json + target.csv)
 │   │   ├── sensors/              # fake 및 실제 드라이버
 │   │   ├── gps/                  # fake 및 실제 드라이버
@@ -502,7 +504,37 @@ Test 설정 화면은 목록·본문·구역 배경을 흰색으로 통일하고
 
 표시 최신값 판정은 `sequence`가 크거나 수신 시각이 더 늦은 표본을 택한다. 재생 소스는 세션이 세는 `sequence`로 순서가 정해지지만 push 소스는 자기 `sequence`를 알 수 없어 0으로 둘 수 있다.
 
-WebSocket 구현체는 **아직 없다.** 주소·인증·메시지 형식·채널 식별자·재접속 정책이 미확정이므로 지어내지 않았다. 확정되면 `StreamingSensorSource`를 상속해 `connect()`/`disconnect()`만 채우면 세션·기록·화면·결과는 그대로 동작한다. 재접속 중 끊긴 구간을 정상 자료와 구별해 표시하는 방법은 규격과 함께 정한다.
+### HI-EDGE LAN WebSocket 수신 (2026-10-02)
+
+센서·GPS 입력원을 **NMEA 파일 재생**과 **LAN 실시간 수신** 중에서 고른다. 장치 설정에서 바꾸며, 실험 창이 열려 있으면 거부한다(한 세션의 기록에 서로 다른 출처가 섞이면 안 된다).
+
+`infrastructure/hiedge.py`의 `HiEdgeSpeedSource`가 `StreamingSensorSource`를 상속한 구현이다. `wss://<host>:8443/ws/data`에 접속해 `hello` 뒤로 오는 `speed` 메시지를 받기만 한다(구독 요청 없음). 수신 스레드가 원본 메시지를 큐에 넣고, 세션 스레드가 `read()`에서 `SensorSample`로 바꾼다. 변환을 `read()`에서 하는 이유는 ① 표본에 박을 `session_id`를 수신 스레드가 모르고 ② 기준점을 세션마다 다시 잡아야 하기 때문이다.
+
+**기준점(origin)은 시작을 누른 뒤 처음 받은 유효 좌표다.** 파일 재생의 "파일 속 첫 fix"와 달리 실시간 소스에는 파일 앞머리가 없다. 기준점을 잡기 전에는 거리·방향을 `None`으로 두고 0으로 채우지 않는다. 세션이 바뀌면 기준점과 누적거리를 다시 센다.
+
+확인된 `speed` 메시지의 최상위 필드(실측, 2026-10-02):
+
+```
+schema, type, stream_id, seq, publication_hz, output_time_utc, output_monotonic_s,
+source_interval_s, source_gap, valid, input_connected, input_age_s, estimate
+```
+
+`estimate`는 유효할 때 `speed_kmh` / `speed_mps` / `measurement_kind`를 담고, 무효일 때 `null`이다. `output_time_utc`는 `source_time_utc`에, 수신 시각은 `received_time_utc`에 따로 남긴다(경과시간은 단조 시계).
+
+**위도·경도는 아직 들어오지 않는다.** 추가하기로 규약이 바뀌었으나 장비에 적용되지 않았다. 소스는 좌표를 여러 후보 이름(`latitude`/`lat`, `longitude`/`lon` …)으로 최상위·`estimate`·`position` 안에서 찾고, 없으면 좌표 기반 채널(`A.1` 시작점 직선거리, `B.0` 횡방향, `B.1` 종방향, `C.1` 누적 이동거리)을 `None`으로 두고 품질에 `좌표 없음`을 적는다. 속도를 적분해 거리처럼 보이게 만들지 않는다 — 경로 적분과 다른 값이고 사용자가 둘을 구별할 수 없다. 좌표가 들어오기 시작하면 코드 변경 없이 네 채널과 지도가 함께 살아난다.
+
+채널 id는 두 모드가 같다(`A.0`…`C.1`). 그래야 결과 그래프와 복사 대상 선택이 모드와 무관하게 동작한다. 라벨만 출처를 밝힌다(`속도 · NMEA` / `속도 · LAN`).
+
+연결 수명과 오류:
+
+- `prepare()`가 수신 스레드를 띄우고 첫 표본까지 기다린다(최대 8초). 못 받으면 **시작을 거부한다** — 조용히 넘기면 "시작했는데 값이 안 온다"로만 보인다.
+- 연결된 뒤의 단절은 수신 스레드가 1초 뒤 재접속으로 처리한다. 그동안 큐에 아무것도 넣지 않으므로 화면은 `수신 대기`가 되고, 5초가 지나면 세션 watchdog이 단절로 끝낸다. **마지막 속도를 현재 값으로 계속 쓰지 않는다.**
+- `seq` 불연속이나 `stream_id` 변경은 그 표본의 품질에 `자료 단절`로 남긴다. 조용히 이어 붙이면 없던 구간이 연속 자료처럼 보인다.
+- 오류 코드: `LAN_CERT_MISSING`, `LAN_CERT_INVALID`, `LAN_SCHEMA_MISMATCH`, `LAN_TIMEOUT`, `LAN_UNAVAILABLE`, `LAN_LIB_MISSING`, `LAN_CLEANUP_FAILED`.
+
+TLS는 장비 공개 인증서(`hi-edge-ui-cert.pem`)로 검증한다. 인증서는 실행 파일 옆(`external_root()`)에 두어 앱을 다시 빌드하지 않고 교체한다. 인증서가 없을 때 **조용히 검증을 끄지 않는다** — 접속 대상이 장비인지 확인하지 못한 채 '연결됨'으로 보이게 된다. 설정의 `인증서 검증 생략(시험용)`을 사용자가 직접 선택해야 꺼진다.
+
+설정에는 `연결 시험` 버튼이 있다. 접속·`hello`·첫 표본까지 확인하고 stream_id, 출력 주기, 속도 유효 여부, 좌표 수신 여부를 보여준다. 소켓 I/O는 작업 스레드에서 돌리고 결과만 `wx.CallAfter`로 받는다. GUI 없이 확인하려면 `python tools/lan_probe.py --host 169.254.32.88 --watch 10`.
 
 ### 앱 밖 시험 폴더와 시험시나리오 (2026-09-30)
 

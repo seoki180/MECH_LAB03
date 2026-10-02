@@ -5,15 +5,17 @@ from experiment_app.ui.pages.devices_page import DevicesPage
 
 
 class SettingsDialog(wx.Dialog):
-    def __init__(self, parent, scenarios, on_scenario, on_nmea, nmea_path, scenario):
+    def __init__(self, parent, scenarios, on_scenario, on_nmea, nmea_path, scenario,
+                 on_mode=None, on_probe=None, mode="nmea", lan_settings=None):
         super().__init__(parent, title="장치 설정", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         style(self)
-        self.SetClientSize(self.FromDIP((scaled(620), scaled(560))))
+        self.SetClientSize(self.FromDIP((scaled(620), scaled(620))))
         self.SetMinSize(self.FromDIP((scaled(420), scaled(360))))
         root = wx.BoxSizer(wx.VERTICAL)
         body = WheelScrolledPanel(self)
         style(body)
-        self.devices = DevicesPage(body, scenarios, on_scenario, on_nmea, nmea_path)
+        self.devices = DevicesPage(body, scenarios, on_scenario, on_nmea, nmea_path,
+                                   on_mode, on_probe, mode, lan_settings)
         self.devices.scenario.SetStringSelection(scenario)
         content = wx.BoxSizer(wx.VERTICAL)
         content.Add(self.devices, 1, wx.EXPAND)

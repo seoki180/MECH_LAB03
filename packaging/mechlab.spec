@@ -24,7 +24,7 @@ analysis = Analysis(
         (str(ROOT / "asset" / "fonts"), "asset/fonts"),
         (str(ROOT / "asset" / "icons"), "asset/icons"),
     ],
-    hiddenimports=[],
+    hiddenimports=["websockets", "websockets.sync.client"],
     hookspath=[],
     runtime_hooks=[],
     # 앱은 네트워크를 쓰지 않고 wx만 의존한다. 테스트·빌드 전용 패키지는 빼서 크기를 줄인다.
