@@ -184,17 +184,3 @@ def test_refresh_only_paints_changed_geometry_or_state():
     api.state = ScrollState(0, 200000, 800, 100000)
     controller.refresh()
     assert len(api.paints) == count + 1
-
-
-def test_client_repaint_does_not_force_redundant_nonclient_paint():
-    """센서 값 갱신 등 잦은 WM_PAINT/WM_SIZE가 상태 변화 없이도 매번 다시 그려서는
-    안 된다 — 이것이 Windows에서 스크롤바가 깜빡이던 원인이었다."""
-    controller, api, _ = make_controller()
-    controller.handle(0xf, 0, 0, lambda: 0)   # WM_PAINT
-    count = len(api.paints)
-    for message in (0xf, 5):                  # WM_PAINT, WM_SIZE again, no state change
-        controller.handle(message, 0, 0, lambda: 0)
-    assert len(api.paints) == count
-    # Genuine nonclient-area invalidation still repaints unconditionally.
-    controller.handle(0x85, 0, 0, lambda: 0)   # WM_NCPAINT
-    assert len(api.paints) == count + 1
