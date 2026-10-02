@@ -22,7 +22,7 @@ class TestTreePane(wx.Panel):
         surface(self.rows)
         self.rows.SetSizer(wx.BoxSizer(wx.VERTICAL))
         self.rows.SetupScrolling(scroll_x=False, rate_y=16)
-        add(root, self.rows, 1, border=4)
+        root.Add(self.rows.with_scrollbar(), 1, wx.EXPAND | wx.ALL, self.FromDIP(4))
         self.hint = text(self, "선택한 시험을 같은 시험목록 안에서 옮깁니다.", 12, colour=MUTED)
         add(root, self.hint)
         bottom = wx.BoxSizer(wx.HORIZONTAL)

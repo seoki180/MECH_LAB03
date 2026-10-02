@@ -97,6 +97,8 @@ _face = None
 FONT_SCALE = 1.15
 # Standard touch target height for inputs and list buttons, sized for the scaled text.
 CONTROL_HEIGHT = 56
+SCROLLBAR_WIDTH = 48
+SCROLLBAR_THUMB_MIN = 48
 
 
 def scaled(dip):
@@ -192,13 +194,13 @@ def stroke(panel, colour=RULE):
     panel.Bind(wx.EVT_SIZE, lambda event: (panel.Refresh(False), event.Skip()))
 
 
-def card(parent, content_factory):
+def card(parent, content_factory, *, scrollable=False):
     """Borderless sheet on the concrete surface; content_factory(card) builds the single child."""
     panel = wx.Panel(parent)
     surface(panel)
     content = content_factory(panel)
     sizer = wx.BoxSizer(wx.VERTICAL)
-    sizer.Add(content, 1, wx.EXPAND)
+    sizer.Add(content.with_scrollbar() if scrollable else content, 1, wx.EXPAND)
     panel.SetSizer(sizer)
     return panel, content
 

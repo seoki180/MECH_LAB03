@@ -12,6 +12,7 @@
 """
 import wx
 from wx.lib.scrolledpanel import ScrolledPanel
+from experiment_app.ui.components.touch_scrollbar import TouchScrollbar
 
 # 이 거리(DIP)를 넘겨 끌면 눌림이 아니라 스크롤로 본다. 태블릿에서 손가락은
 # 버튼을 누를 때도 몇 픽셀 흔들린다.
@@ -21,11 +22,46 @@ DRAG_THRESHOLD = 10
 class WheelScrolledPanel(ScrolledPanel):
     def __init__(self, parent):
         super().__init__(parent)
-        self._wheel_remainder = 0
+        self._wheel_line_pixels = self.FromDIP(16)
         self._scroll_remainder = 0
         self._drag_from = None
         self._dragging = False
         self._bind_scroll_input(self)
+        self.scrollbar = None
+        self._scroll_sizer = None
+
+    def SetupScrolling(self, scroll_x=True, scroll_y=True, rate_x=20, rate_y=20,
+                       scrollToTop=True, scrollIntoView=True):
+        # Keep wheel line distance, but let pan/high-resolution wheel move by pixels.
+        self._wheel_line_pixels = self.FromDIP(rate_y)
+        super().SetupScrolling(scroll_x, scroll_y, rate_x, 1 if rate_y else 0,
+                               scrollToTop, scrollIntoView)
+
+    def with_scrollbar(self):
+        """Add this sizer, rather than the panel, to its parent's layout."""
+        if self._scroll_sizer is None:
+            self.ShowScrollbars(wx.SHOW_SB_NEVER, wx.SHOW_SB_NEVER)
+            self.scrollbar = TouchScrollbar(self.GetParent(), self._scroll_to_pixel,
+                                           self._child_wheel)
+            self._scroll_sizer = wx.BoxSizer(wx.HORIZONTAL)
+            self._scroll_sizer.Add(self, 1, wx.EXPAND)
+            self._scroll_sizer.Add(self.scrollbar, 0, wx.EXPAND)
+            self.Bind(wx.EVT_IDLE, self._sync_scrollbar)
+        return self._scroll_sizer
+
+    def _scroll_to_pixel(self, position):
+        unit = self.GetScrollPixelsPerUnit()[1]
+        if unit:
+            maximum = max(0, self.GetVirtualSize().height - self.GetClientSize().height)
+            self.Scroll(-1, round(max(0, min(position, maximum)) / unit))
+            self._sync_scrollbar()
+
+    def _sync_scrollbar(self, event=None):
+        if self.scrollbar:
+            self.scrollbar.render(self.GetViewStart()[1] * self.GetScrollPixelsPerUnit()[1],
+                                  self.GetClientSize().height, self.GetVirtualSize().height)
+        if event:
+            event.Skip()
 
     def bind_wheel_children(self, exclude=()):
         """Call after building or replacing controls inside the scrolling area."""
@@ -62,7 +98,11 @@ class WheelScrolledPanel(ScrolledPanel):
         if not units:
             return False
         self._scroll_remainder -= units * unit
-        self.Scroll(-1, max(0, self.GetViewStart()[1] + units))
+        before = self.GetViewStart()[1]
+        self.Scroll(-1, max(0, before + units))
+        if self.GetViewStart()[1] == before:
+            self._scroll_remainder = 0
+            return False
         return True
 
     # --------------------------------------------------------------- 입력
@@ -75,13 +115,9 @@ class WheelScrolledPanel(ScrolledPanel):
         if not delta or not self.GetScrollPixelsPerUnit()[1]:
             event.Skip()
             return
-        self._wheel_remainder += event.GetWheelRotation()
-        steps = abs(self._wheel_remainder) // delta
-        if not steps:
-            return
-        direction = 1 if self._wheel_remainder < 0 else -1
-        self._wheel_remainder -= (1 if self._wheel_remainder > 0 else -1) * steps * delta
-        self.Scroll(-1, self.GetViewStart()[1] + direction * steps * max(1, event.GetLinesPerAction()))
+        distance = (self.GetClientSize().height if event.IsPageScroll()
+                    else self._wheel_line_pixels * max(1, event.GetLinesPerAction()))
+        self.scroll_by_pixels(-event.GetWheelRotation() / delta * distance)
 
     def _pan(self, event):
         if event.IsGestureStart():

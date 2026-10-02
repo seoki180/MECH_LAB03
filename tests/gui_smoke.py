@@ -259,7 +259,12 @@ def check_chart_touch_scroll(exp):
     finger_drag(card.chart, -60)
     check(body.GetViewStart()[1] > 0 and card.chart.bounds() == full,
           "Drag on an unzoomed chart scrolls the body instead of being swallowed")
-    card.chart.zoom_at(4.0, wx.Point(100, 60))
+    # Zoom at the plot centre: a fixed y=60 can hit the lower edge after layout
+    # changes, where an upward drag correctly clamps instead of moving the chart.
+    width, height = card.chart.GetClientSize()
+    centre = wx.Point((width + card.chart.FromDIP(42)) // 2,
+                      (height - card.chart.FromDIP(24)) // 2)
+    card.chart.zoom_at(4.0, centre)
     zoomed = card.chart.bounds()
     body.Scroll(0, 0)
     finger_drag(card.chart, -60)
