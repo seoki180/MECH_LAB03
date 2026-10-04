@@ -6,6 +6,7 @@
 """
 import http.client
 import json
+import socket
 import time
 
 import pytest
@@ -343,18 +344,40 @@ def test_no_status_transport_never_raises_stale():
 
 # -------------------------------------------------------------- 5. 오류/규격 위반
 
-def test_unreachable_and_timeout_are_distinct_codes():
+def test_unreachable_is_reported_on_the_first_request():
     """연결 실패는 connect가 아니라 첫 요청(/settings)에서 드러난다.
 
     connect는 더 이상 로봇에 아무것도 보내지 않는다(시험 흐름에 /health가 없다).
     그래서 로봇이 꺼져 있으면 세팅값을 보내는 순간 알게 된다.
+
+    꺼진 주소가 연결 거부로 끝나는지 응답 없이 시간이 차는지는 OS가 정한다
+    (Windows는 닫힌 포트에 바로 RST를 주지 않고 재시도하는 경우가 있다). 둘 중
+    무엇이든 조치를 알 수 있는 문구를 담아야 한다는 것이 이 검사의 내용이다.
     """
     transport = HttpRobotTransport(SystemClock(), url="http://127.0.0.1:9")
     transport.connect(timeout=1, cancel=Cancel())  # 아무것도 보내지 않으므로 성공한다
     with pytest.raises(AppError) as error:
         configure(transport)
-    assert error.value.code == "ROBOT_UNREACHABLE"
-    assert "랜선" in str(error.value)
+    assert error.value.code in ("ROBOT_UNREACHABLE", "ROBOT_TIMEOUT")
+    assert "랜선" in str(error.value) or "로봇 프로그램" in str(error.value)
+
+
+def test_timeout_has_its_own_code():
+    """연결은 되지만 답이 없는 로봇은 ROBOT_TIMEOUT으로 구별한다."""
+    silent = socket.socket()
+    silent.bind(("127.0.0.1", 0))
+    silent.listen(1)  # 받기만 하고 응답하지 않는다
+    try:
+        transport = HttpRobotTransport(SystemClock(),
+                                       url=f"http://127.0.0.1:{silent.getsockname()[1]}")
+        transport.connect(timeout=1, cancel=Cancel())
+        with pytest.raises(AppError) as error:
+            transport.exchange(RobotCommand("s" * 32, 1, "configure", payload()),
+                               timeout=0.5, cancel=Cancel())
+        assert error.value.code == "ROBOT_TIMEOUT"
+        assert "로봇 프로그램" in str(error.value)
+    finally:
+        silent.close()
 
 
 def test_connect_sends_nothing_to_the_robot():
@@ -380,9 +403,14 @@ def test_probe_checks_health_only_from_the_settings_screen():
     with RobotStub(fail="health") as stub:
         ok, message = transport_for(stub).probe(timeout=3)
         assert not ok and "DEVICE_NOT_READY" in message
-    # 꺼져 있는 주소도 예외 없이 사유를 돌려준다.
+    # 꺼져 있는 주소도 예외 없이 사유를 돌려준다. 연결 거부(ROBOT_UNREACHABLE)로
+    # 끝나는지 응답 없이 시간이 차는지(ROBOT_TIMEOUT)는 OS가 정한다 — Windows는
+    # 닫힌 포트에 RST를 주지 않고 대기하는 경우가 있다. 어느 쪽이든 조치를 알 수
+    # 있는 문구여야 한다는 것이 이 검사의 내용이다.
     ok, message = HttpRobotTransport(SystemClock(), url="http://127.0.0.1:9").probe(timeout=1)
-    assert not ok and "랜선" in message
+    assert not ok
+    assert "http://127.0.0.1:9" in message
+    assert "랜선" in message or "로봇 프로그램" in message
 
 
 def test_health_failure_surfaces_when_the_test_starts():
