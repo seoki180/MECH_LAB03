@@ -66,3 +66,32 @@ class SettingsStore:
         data["lan"] = {"host": settings.get("host"), "port": settings.get("port"),
                        "verify": settings.get("verify", True)}
         self.save(data)
+
+    # --- 로봇 HTTP 설정 ---
+
+    def robot(self, defaults):
+        """저장된 로봇 주소. 값이 이상하면 그 항목만 기본값으로 돌린다.
+
+        규격은 docs/ROBOT_HTTP_API.md다. 현장마다 로봇 PC의 IP가 달라 실행할 때마다
+        다시 입력하게 두면 안 되므로 LAN 주소와 같은 방식으로 남긴다.
+        """
+        saved = self.load().get("robot")
+        if not isinstance(saved, dict):
+            return dict(defaults)
+        settings = dict(defaults)
+        host = saved.get("host")
+        if isinstance(host, str) and host.strip():
+            settings["host"] = host.strip()
+        port = saved.get("port")
+        if isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535:
+            settings["port"] = port
+        if isinstance(saved.get("enabled"), bool):
+            settings["enabled"] = saved["enabled"]
+        return settings
+
+    def save_robot(self, settings):
+        """로봇 설정만 갱신한다. 다른 항목은 건드리지 않는다."""
+        data = self.load()
+        data["robot"] = {"host": settings.get("host"), "port": settings.get("port"),
+                         "enabled": settings.get("enabled", False)}
+        self.save(data)

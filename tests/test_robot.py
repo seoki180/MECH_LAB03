@@ -95,28 +95,57 @@ def test_transmits_saved_snapshot_receives_and_records(tmp_path):
 
 
 @pytest.mark.parametrize("fail,code", [("configure", "ROBOT_REJECTED"),
-                                      ("wrong_reply", "ROBOT_REPLY_MISMATCH"),
-                                      ("stop", "ROBOT_REJECTED")])
-def test_command_failure_marks_incomplete_and_disconnects(tmp_path, fail, code):
+                                      ("wrong_reply", "ROBOT_REPLY_MISMATCH")])
+def test_configuration_failure_blocks_start_and_disconnects(tmp_path, fail, code):
+    """세팅은 실험 창을 열 때 보낸다. 거절당하면 시작 자체가 막힌다.
+
+    예전에는 시작을 누른 뒤 _run 안에서 터져 ERROR 결과가 남았다. 지금은 시작
+    신호가 아예 나가지 않으므로 측정도 결과도 생기지 않는다 — 로봇이 설정을
+    받지 못한 것을 누르기 전에 알리는 편이 낫다.
+    """
     transport = InspectTransport(fail)
     main, experiment = build_services(tmp_path, robot_transport=transport)
     try:
         sessions = experiment.sessions
         session = sessions.prepare("demo-0", 1)
-        sessions.start(session.session_id)
-        # configure/wrong_reply는 시작 중 스스로 오류로 끝난다. stop 거부는 중지를
-        # 요청해야 드러나므로 그때만 중지를 보낸다.
-        result = finish(sessions, stop=(fail == "stop"))
-        assert result.state == State.ERROR and code in result.end_reason
-        assert transport.closed and sessions.robot.view().state == "오류"
-        assert sessions.results.list()[0]["completeness"] == "불완전"
-        if fail != "stop":
-            assert "start" not in [c.operation for c in transport.commands]
+        ready, reason = sessions.wait_for_robot()
+        assert not ready and code in reason
+        with pytest.raises(AppError) as failure:
+            sessions.start(session.session_id)
+        assert failure.value.code == "ROBOT_NOT_READY" and code in str(failure.value)
+        assert "start" not in [c.operation for c in transport.commands]
+        assert sessions.robot.view().state == "오류"
+        assert sessions.results.list() == [], "시작하지 않았으므로 결과도 없다"
+        # 창을 닫으면 연결을 정리한다.
+        sessions.release_ready()
+        assert transport.closed
     finally:
         main.dispose()
 
 
-def test_stop_cancels_pending_configuration_but_sends_stop(tmp_path):
+def test_stop_rejection_marks_the_result_incomplete(tmp_path):
+    """중지 거부는 측정이 끝날 때 드러난다. 이 경로는 그대로다."""
+    transport = InspectTransport("stop")
+    main, experiment = build_services(tmp_path, robot_transport=transport)
+    try:
+        sessions = experiment.sessions
+        session = sessions.prepare("demo-0", 1)
+        assert sessions.wait_for_robot()[0]
+        sessions.start(session.session_id)
+        result = finish(sessions, stop=True)
+        assert result.state == State.ERROR and "ROBOT_REJECTED" in result.end_reason
+        assert transport.closed and sessions.robot.view().state == "오류"
+        assert sessions.results.list()[0]["completeness"] == "불완전"
+    finally:
+        main.dispose()
+
+
+def test_closing_the_window_cancels_a_pending_configuration(tmp_path):
+    """세팅 전송 중에 창을 닫으면 전송을 취소한다.
+
+    세팅은 prepare에서 나가므로, 사용자가 시작을 누르기 전에도 전송이 진행 중일 수
+    있다. 그때 창을 닫으면 기다리지 않고 끊는다.
+    """
     class BlockingTransport(InspectTransport):
         ready = Event()
 
@@ -132,13 +161,13 @@ def test_stop_cancels_pending_configuration_but_sends_stop(tmp_path):
     main, experiment = build_services(tmp_path, robot_transport=transport)
     try:
         sessions = experiment.sessions
-        session = sessions.prepare("demo-0", 1)
-        sessions.start(session.session_id)
-        assert transport.ready.wait(1)
-        sessions.stop(session.session_id)
-        result = finish(sessions)
-        assert result.state == State.STOPPED
-        assert [c.operation for c in transport.commands] == ["configure", "stop"]
+        sessions.prepare("demo-0", 1)
+        assert transport.ready.wait(1), "세팅 전송이 시작된다"
+        sessions.release_ready()
+        assert not sessions.configuring, "창을 닫으면 전송 스레드가 끝나 있다"
+        # 시작 신호는 가지 않는다. 세팅까지 간 연결은 중지로 내려놓는다
+        # (HTTP 전송에는 중지 요청이 없어 아무것도 보내지 않는다).
+        assert "start" not in [c.operation for c in transport.commands]
         assert transport.closed
     finally:
         main.dispose()

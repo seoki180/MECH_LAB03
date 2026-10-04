@@ -184,7 +184,11 @@ class MainFrame(wx.Frame):
                                               self.select_nmea, self.experiment_presenter.nmea_path,
                                               self.sessions.scenario, self.set_source_mode,
                                               self.probe_lan, self.experiment_presenter.source_mode,
-                                              self.experiment_presenter.lan_settings)
+                                              self.experiment_presenter.lan_settings,
+                                              self.set_robot,
+                                              self.experiment_presenter.robot_settings,
+                                              self.experiment_presenter.robot_status(),
+                                              self.probe_robot)
         try:
             self.settings_dialog.ShowModal()
         finally:
@@ -431,6 +435,30 @@ class MainFrame(wx.Frame):
             self.settings_dialog.devices.show_save_error(self.experiment_presenter.save_error)
         return True
 
+    def set_robot(self, settings):
+        """로봇 주소를 적용한다. (적용됨, 표시할 문구)를 돌려준다.
+
+        센서 입력원과 같은 제약을 쓴다. 실험 창이 열려 있으면 거부한다 — 준비된
+        세션이 이미 이전 로봇으로 설정을 보냈을 수 있다.
+        """
+        if self.experiment:
+            return False, "실험 창이 열려 있어 로봇 주소를 바꿀 수 없습니다. 실험을 닫고 다시 적용하세요."
+        try:
+            self.experiment_presenter.use_robot(**settings)
+        except AppError as error:
+            return False, str(error)
+        status = self.experiment_presenter.robot_status()
+        if self.settings_dialog:
+            self.settings_dialog.devices.show_robot_status(status)
+        # 적용은 됐지만 다음 실행까지 남기지 못한 경우를 숨기지 않는다.
+        save_error = getattr(self.experiment_presenter, "robot_save_error", "")
+        if save_error:
+            return False, save_error
+        if not settings.get("enabled"):
+            return True, "데모 로봇으로 돌렸습니다. 실제 로봇에는 보내지 않습니다."
+        return True, (f"적용되었습니다 · {settings['host']}:{settings['port']} · "
+                      "시작할 때 설정과 target.csv를 보냅니다.")
+
     def probe_lan(self, settings, done):
         """LAN 연결을 한 번 확인한다. 소켓 I/O는 작업 스레드에서 돌린다."""
         from experiment_app.infrastructure import hiedge
@@ -447,6 +475,25 @@ class MainFrame(wx.Frame):
             wx.CallAfter(self._probe_done, done, ok, message)
 
         Thread(target=work, name="mechlab-lan-probe", daemon=True).start()
+
+    def probe_robot(self, settings, done):
+        """로봇 연결을 한 번 확인한다. 소켓 I/O는 작업 스레드에서 돌린다.
+
+        LAN 확인과 같은 구조다. 시험 흐름에서는 /health를 보내지 않으므로
+        로봇이 꺼져 있는지 미리 아는 수단은 이 버튼뿐이다.
+        """
+        def work():
+            try:
+                ok, message = self.experiment_presenter.probe_robot(settings["host"],
+                                                                    settings["port"])
+            except AppError as error:
+                ok, message = False, f"{error.code}: {error}"
+            except Exception as error:
+                ok, message = False, f"{type(error).__name__}: {error}"
+            # 대화상자가 닫힌 뒤 도착할 수 있다. 호출부가 살아 있는지 확인한다.
+            wx.CallAfter(self._probe_done, done, ok, message)
+
+        Thread(target=work, name="mechlab-robot-probe", daemon=True).start()
 
     def _probe_done(self, done, ok, message):
         if self.disposed or self.settings_dialog is None:

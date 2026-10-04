@@ -134,7 +134,10 @@ class ExperimentFrame(wx.Frame):
             self.Layout()
         self.header.render(LABELS[session.state], TONES.get(session.state, "idle"),
                            f"{int(session.elapsed)//60:02}:{int(session.elapsed)%60:02}")
-        self.header.buttons["start"].Enable(session.state == State.READY)
+        # 시작은 세팅 전송이 끝난 뒤에만 누를 수 있다. 세팅을 받지 못한 로봇에
+        # 시작 신호를 보내면 의도와 다른 시험이 돌아간다.
+        robot_ready, robot_reason = self.presenter.sessions.robot_ready()
+        self.header.buttons["start"].Enable(session.state == State.READY and robot_ready)
         self.header.buttons["stop"].Enable(session.state in {State.STARTING, State.RUNNING})
         # 그래프는 기록 파일을 읽어 그린다. 기록이 닫히기 전에는 자료가 온전하지 않으므로
         # 측정이 끝나고 정리까지 마친 뒤에만 켠다.
@@ -170,7 +173,10 @@ class ExperimentFrame(wx.Frame):
         elif session.state == State.STOPPING:
             self.SetStatusText("수집을 멈추고 기록을 정리하는 중입니다…")
         else:
-            self.SetStatusText(f"시작을 누르면 로봇에 연결해 설정을 보냅니다.   세션 {session.session_id[:8]}")
+            # 로봇 세팅은 창을 열 때 이미 보냈다. 시작을 막는 사유가 있으면
+            # 그것부터 알린다 — 버튼이 왜 눌리지 않는지 화면이 설명해야 한다.
+            detail = robot_reason if not robot_ready else "시작을 누르면 로봇에 시작 신호를 보냅니다."
+            self.SetStatusText(f"{detail}   세션 {session.session_id[:8]}")
         if self.closing and self.presenter.sessions.is_idle():
             self.dispose()
             self.Destroy()

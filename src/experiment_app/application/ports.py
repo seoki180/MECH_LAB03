@@ -84,8 +84,14 @@ class RobotTransport(Protocol):
     A reply acknowledges its command's session_id and sequence. Only configure
     success after device-side application/validation may return accepted=True.
     Map these semantic contracts to the actual SDK/wire protocol in infrastructure.
+
+    ``receives_status`` (optional, default True) declares whether the device sends
+    progress events back at all. A one-way control adapter sets it False; the
+    application then skips stale-reception judgement, because judging a delay in
+    data that can never arrive ends every session with a false error.
     """
     demo: bool
+    receives_status: bool
 
     def connect(self, *, timeout: float, cancel: Event) -> None: ...
     def exchange(self, command: RobotCommand, *, timeout: float, cancel: Event) -> RobotReply: ...

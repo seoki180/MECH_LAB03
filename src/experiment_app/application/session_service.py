@@ -4,6 +4,7 @@ from threading import Event, RLock, Thread
 from uuid import uuid4
 from experiment_app.domain.session import Session, ExecutionSnapshot, State, ACTIVE, TERMINAL
 from experiment_app.domain.test_definition import AppError
+from .robot_service import RobotService
 
 # 이 사유로 끝난 세션만 COMPLETED다. 나머지(사용자 중지, 시간 상한, 오류)는 끝까지
 # 받지 못한 것이므로 STOPPED/ERROR로 남긴다.
@@ -27,6 +28,82 @@ class SessionService:
         self.scenario = "정상"
         self.recorder = None
         self.robot = robot
+        # --- 로봇 설정 전송(세팅) 상태 ---
+        # 시험 세팅은 실험 창을 열 때(prepare) 한 번 보내고, 시작 신호는 사용자가
+        # 시작을 누를 때 보낸다. 세팅 전송은 HTTP라 GUI 스레드에서 하면 화면이 멈추므로
+        # 작업 스레드에서 돌리고, 끝날 때까지 시작을 막는다.
+        self.configure_worker = None
+        self.configure_event = Event()
+        self.configure_error = None
+        # 시작할 때 세팅 전송을 기다려 주는 상한(초). 로봇 요청 타임아웃(3초)보다
+        # 넉넉해야 '아직 보내는 중'과 '로봇이 응답하지 않음'을 구별할 수 있다.
+        self.configure_timeout = 10
+
+    # ------------------------------------------------------- 로봇 세팅 전송
+
+    @property
+    def configuring(self):
+        """세팅 전송이 아직 진행 중인가."""
+        worker = self.configure_worker
+        return worker is not None and worker.is_alive()
+
+    def robot_ready(self):
+        """시작 신호를 보낼 수 있는 상태인지. (가능, 사유)를 돌려준다.
+
+        로봇이 없거나 세팅이 끝났으면 가능하다. 전송 중이거나 실패했으면 불가능하며
+        사유를 그대로 돌려준다 — 시작 버튼이 왜 눌리지 않는지 화면이 설명해야 한다.
+        """
+        if self.robot is None:
+            return True, ""
+        if self.configuring:
+            return False, "로봇에 시험 설정을 보내는 중입니다."
+        if self.configure_error is not None:
+            return False, f"{getattr(self.configure_error, 'code', 'ROBOT_FAILED')}: {self.configure_error}"
+        if not self.robot.connected:
+            return False, "로봇에 시험 설정이 전송되지 않았습니다. 실험 창을 닫고 다시 여세요."
+        return True, ""
+
+    def wait_for_robot(self, timeout=5):
+        """세팅 전송이 끝날 때까지 기다린다. (가능, 사유)를 돌려준다.
+
+        GUI는 이것을 쓰지 않는다 — tick이 robot_ready()로 버튼만 켜고 끈다.
+        화면을 멈추지 않기 위해서다. 기다려도 되는 호출부(테스트, 콘솔)만 쓴다.
+        """
+        worker = self.configure_worker
+        if worker is not None:
+            worker.join(timeout)
+        return self.robot_ready()
+
+    def _configure_robot(self, session):
+        """실험 창을 열 때 로봇에 시험 세팅값과 시나리오를 보낸다.
+
+        작업 스레드에서 돌린다. 실패는 여기서 올리지 않고 configure_error에 남긴다 —
+        창을 여는 동작 자체를 막기보다, 창을 열어 두고 시작을 막으면서 사유를 보여주는
+        편이 사용자가 다음에 할 일을 알기 쉽다.
+        """
+        if self.robot is None:
+            return
+        self.configure_event = Event()
+        self.configure_error = None
+        cancel = self.configure_event
+
+        def work():
+            try:
+                self.robot.begin(session, cancel)
+            except Exception as exception:
+                self.configure_error = exception
+                self.robot.update(state="오류", message=str(exception))
+
+        self.configure_worker = Thread(target=work, name="mechlab-robot-configure", daemon=True)
+        self.configure_worker.start()
+
+    def _cancel_configure(self, timeout=3):
+        """진행 중인 세팅 전송을 취소하고 기다린다. 준비 세션을 버릴 때 쓴다."""
+        self.configure_event.set()
+        worker = self.configure_worker
+        if worker is not None and worker.is_alive():
+            worker.join(timeout)
+        self.configure_worker = None
 
     def view(self):
         with self.lock:
@@ -51,7 +128,12 @@ class SessionService:
             self.current = Session(uuid4().hex, ExecutionSnapshot(
                 deepcopy(definition), self.channels, scenario or ())).transition(State.READY)
             self.telemetry.reset(self.current.session_id)
-            return self.current
+            session = self.current
+        # 교체된 준비 세션의 전송이 남아 있으면 먼저 끊는다. 락 밖에서 기다린다.
+        self._cancel_configure()
+        # 여기서 로봇에 시험 세팅값과 target.csv를 보낸다(시작 신호는 아직이다).
+        self._configure_robot(session)
+        return session
 
     def _scenario(self, test_id):
         """저장소가 시나리오를 제공할 때만 읽는다. 없는 구현이면 None(검사 생략)."""
@@ -60,13 +142,35 @@ class SessionService:
 
     def release_ready(self):
         with self.lock:
-            if self.current and self.current.state == State.READY:
+            drop = bool(self.current and self.current.state == State.READY)
+            if drop:
                 self.current = None
+        if drop:
+            # 창을 닫으면 전송 중이던 세팅도 끊는다. 락 밖에서 기다린다.
+            self._cancel_configure()
+            # 세팅까지 간 연결은 닫아 준다. 시작 신호는 가지 않았다.
+            if self.robot is not None and self.robot.connected:
+                try:
+                    self.robot.close()
+                except Exception:
+                    # 창을 닫는 길은 로봇 오류로 막지 않는다. 사유는 상태에 남는다.
+                    pass
 
     def start(self, session_id):
+        # 세팅 전송이 아직이면 잠깐 기다린다. 락 밖에서 기다려야 전송 스레드가
+        # 끝날 수 있다. GUI는 전송 중에 시작 버튼을 막으므로 여기서 멈추지 않는다.
+        if self.configuring:
+            worker = self.configure_worker
+            if worker is not None:
+                worker.join(self.configure_timeout)
         with self.lock:
             if not self.current or self.current.session_id != session_id or self.current.state != State.READY:
                 return False
+            # 세팅이 끝나지 않았거나 실패했으면 시작 신호를 보내지 않는다.
+            # 로봇이 설정을 받지 못한 채 구동하면 의도와 다른 시험이 된다.
+            ready, reason = self.robot_ready()
+            if not ready:
+                raise AppError("ROBOT_NOT_READY", reason)
             self.stop_event = Event()
             self.current = self.current.transition(State.STARTING, cleaned_up=False)
             self.worker = Thread(target=self._run, args=(self.scenario,), name="mechlab-acquisition", daemon=True)
@@ -79,6 +183,20 @@ class SessionService:
                 raise AppError("INVALID_STATE", "실험 창을 종료한 뒤 파일을 선택하세요.")
             self.channels = channels
             self.sensors, self.gps = sensors, gps
+
+    def set_robot(self, transport):
+        """로봇 전송을 바꾼다. 실행 중에는 거부한다.
+
+        전송만 받아 RobotService로 감싼다. 호출부가 서비스를 만들게 하면 clock이나
+        타임아웃을 서로 다르게 주는 경로가 생긴다.
+
+        set_sources와 같은 제약을 쓴다. 준비된 세션이 이미 이전 로봇으로 설정을
+        보냈을 수 있으므로, 실행 중 교체를 허용하면 어느 로봇이 구동하는지 알 수 없다.
+        """
+        with self.lock:
+            if self.worker and self.worker.is_alive() or self.current and self.current.state not in TERMINAL:
+                raise AppError("INVALID_STATE", "실험 창을 종료한 뒤 로봇 주소를 바꾸세요.")
+            self.robot = RobotService(transport, self.clock) if transport is not None else None
 
     def _reached_end(self, elapsed, continuous, exhausted):
         """수집을 끝낼 때인지 판단하고, 끝내는 경우 사실에 맞는 사유를 남긴다.
@@ -117,7 +235,8 @@ class SessionService:
             recorder.begin(self.view(), scenario)
             begun = True
             if self.robot:
-                self.robot.begin(self.view(), self.stop_event)
+                # 세팅값과 시나리오는 실험 창을 열 때(prepare) 이미 보냈다.
+                # 여기서는 시작 신호만 보낸다.
                 self.robot.start(self.stop_event)
             start = self.clock.monotonic()
             with self.lock:

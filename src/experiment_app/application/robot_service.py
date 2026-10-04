@@ -10,12 +10,17 @@ class RobotService:
     def __init__(self, transport, clock, timeout=3, stale_after=5):
         self.transport, self.clock = transport, clock
         self.timeout, self.stale_after = timeout, stale_after
+        # 진행 상태를 받지 않는 전송(HTTP 제어 경로)은 수신 지연을 판정할 수 없다.
+        # 받을 것이 없는데 지연으로 보면 모든 시험이 stale_after 뒤 오류로 끝난다.
+        self.receives_status = getattr(transport, "receives_status", True)
         self.lock = RLock()
         self.status = RobotView(demo=transport.demo)
         self.connected = False
         self.sequence = 0
         self.received_sequence = -1
         self.last_received = None
+        # 현재 실행 중인 시험 식별. begin()에서 채운다.
+        self.identity = {}
 
     def view(self):
         with self.lock:
@@ -44,9 +49,12 @@ class RobotService:
         self.transport.connect(timeout=self.timeout, cancel=cancel)
         self.connected = True
         definition = session.snapshot.definition
+        # start/stop 요청도 어느 시험인지 밝혀야 한다. HTTP 전송은 이 값을 헤더와
+        # /start 본문에 넣어 로봇이 세팅과 같은 시험인지 확인한다(TEST_MISMATCH).
+        self.identity = {"test_id": definition.id, "test_revision": definition.revision}
         self.update(state="설정 전송 중")
         self.command("configure", cancel, {
-            "test_id": definition.id, "test_revision": definition.revision,
+            **self.identity,
             "experiment_data": definition.experiment_data,
             "ar_trapezoidal_step": definition.ar_trapezoidal_step,
             "pf_straight_line": definition.pf_straight_line,
@@ -60,9 +68,12 @@ class RobotService:
         self.update(state="설정 확인 완료")
 
     def start(self, cancel):
-        self.command("start", cancel)
-        self.last_received = self.clock.monotonic()
-        self.update(state="실행 확인 완료")
+        self.command("start", cancel, dict(self.identity))
+        # 상태를 받는 전송만 수신 시계를 돌린다. 받지 않는 전송은 None으로 두어
+        # receive()의 지연 판정 자체가 일어나지 않게 한다.
+        self.last_received = self.clock.monotonic() if self.receives_status else None
+        self.update(state="실행 확인 완료" if self.receives_status
+                          else "실행 확인 완료 · 진행 상태 수신 없음")
 
     def receive(self):
         event = self.transport.receive()
@@ -86,7 +97,7 @@ class RobotService:
             if self.connected:
                 self.update(state="중지 요청 중")
                 # Acquisition cancellation must not cancel the safety stop command.
-                self.command("stop", Event())
+                self.command("stop", Event(), dict(self.identity))
         except Exception as exception:
             error = exception
         finally:

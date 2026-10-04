@@ -5,7 +5,8 @@ from .view_models import metric_model
 
 class ExperimentPresenter:
     def __init__(self, sessions, telemetry, copier, clock, nmea_sources=None, nmea_path=None,
-                 analysis=None, lan_sources=None, settings_store=None, lan_defaults=None):
+                 analysis=None, lan_sources=None, settings_store=None, lan_defaults=None,
+                 robot_sources=None, robot_defaults=None):
         self.sessions, self.telemetry, self.copier, self.clock = sessions, telemetry, copier, clock
         self.nmea_sources, self.nmea_path = nmea_sources, nmea_path
         self.analysis = analysis
@@ -21,6 +22,12 @@ class ExperimentPresenter:
         defaults = dict(lan_defaults or {"host": "", "port": 8443, "verify": True, "certificate": None})
         self.lan_settings = settings_store.lan(defaults) if settings_store else defaults
         self.save_error = ""
+        # 로봇은 센서와 다른 기기다(HI-EDGE와 주소·포트가 따로다). 같은 설정 화면에서
+        # 다루지만 값은 섞지 않는다. robot_sources는 주소로 전송을 만드는 함수다.
+        self.robot_sources = robot_sources
+        robot_default = dict(robot_defaults or {"host": "", "port": 8080, "enabled": False})
+        self.robot_settings = settings_store.robot(robot_default) if settings_store else robot_default
+        self.robot_save_error = ""
         self.visible = {"B": ("B.0", "B.1"), "C": ("C.0", "C.1")}
 
     def analyse(self, session_id):
@@ -75,6 +82,58 @@ class ExperimentPresenter:
         if not self.nmea_path:
             raise AppError("VALIDATION_FAILED", "재생할 NMEA 파일을 먼저 선택하세요.")
         self.select_nmea(self.nmea_path)
+
+    # --- 로봇 연결 ---
+
+    def use_robot(self, host, port, enabled=True):
+        """로봇 전송을 주소에 맞춰 바꾼다.
+
+        센서 LAN과 같은 모양이지만 다른 기기다. enabled가 False면 데모 로봇으로
+        되돌린다 — 주소만 남기고 실제로는 보내지 않는 상태다.
+
+        주소를 켜면서 비워 두는 것은 거부한다. 빈 주소로 전송을 만들면 시작할 때
+        비로소 실패하고, 사용자는 원인을 설정 화면에서 찾지 못한다.
+        """
+        if self.robot_sources is None:
+            raise AppError("VALIDATION_FAILED", "로봇 전송 구성이 없습니다.")
+        host = (host or "").strip()
+        if enabled and not host:
+            raise AppError("VALIDATION_FAILED", "로봇 주소를 입력하세요.")
+        settings = {"host": host, "port": port, "enabled": bool(enabled)}
+        # set_robot이 거부하면(실험 창이 열려 있음) 설정을 바꾸지 않는다. 화면에만
+        # 새 주소가 남고 실제로는 옛 로봇으로 보내는 상태를 만들지 않는다.
+        self.sessions.set_robot(self.robot_sources(**settings))
+        self.robot_settings = settings
+        self.remember_robot(settings)
+
+    def remember_robot(self, settings):
+        """다음 실행에서도 쓰도록 로봇 주소를 남긴다. 실패해도 적용은 되돌리지 않는다."""
+        self.robot_save_error = ""
+        if self.settings_store is None:
+            return
+        try:
+            self.settings_store.save_robot(settings)
+        except OSError as error:
+            self.robot_save_error = f"로봇 주소를 저장하지 못해 다음 실행에는 남지 않습니다: {error}"
+
+    def probe_robot(self, host, port):
+        """로봇에 /health를 한 번 보내 받을 준비가 됐는지 확인한다.
+
+        시험 흐름에는 /health가 없으므로(시작하면 바로 세팅값을 보낸다) 로봇이 꺼져
+        있는지 미리 아는 수단이 이것뿐이다. (성공, 문구)를 돌려준다.
+
+        소켓을 열므로 호출부가 작업 스레드에서 불러야 한다. 적용된 전송을 쓰지 않고
+        입력된 주소로 새로 만든다 — 아직 적용하지 않은 주소도 시험할 수 있어야 한다.
+        """
+        if self.robot_sources is None:
+            return False, "로봇 전송 구성이 없습니다."
+        host = (host or "").strip()
+        if not host:
+            return False, "로봇 주소를 입력하세요."
+        transport = self.robot_sources(host=host, port=port, enabled=True)
+        if not hasattr(transport, "probe"):
+            return False, "이 전송은 연결 시험을 제공하지 않습니다."
+        return transport.probe(timeout=3)
 
     def source_status(self):
         """현재 입력원을 사실대로 한 줄로. 설정·실험 헤더가 함께 쓴다."""

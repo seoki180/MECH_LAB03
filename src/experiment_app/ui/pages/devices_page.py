@@ -1,6 +1,6 @@
 import wx
 from pathlib import Path
-from experiment_app.infrastructure import hiedge
+from experiment_app.infrastructure import hiedge, http_robot
 from experiment_app.ui.theme import (text, button, add, surface, section_bar, input_control,
                                      MUTED, DANGER)
 
@@ -14,11 +14,14 @@ class DevicesPage(wx.Panel):
     """
 
     def __init__(self, parent, scenarios, on_scenario, on_nmea, nmea_path,
-                 on_mode=None, on_probe=None, mode="nmea", lan_settings=None):
+                 on_mode=None, on_probe=None, mode="nmea", lan_settings=None,
+                 on_robot=None, robot_settings=None, robot_status="", on_robot_probe=None):
         super().__init__(parent)
         surface(self)
-        self.on_mode, self.on_probe = on_mode, on_probe
+        self.on_mode, self.on_probe, self.on_robot = on_mode, on_probe, on_robot
+        self.on_robot_probe = on_robot_probe
         settings = lan_settings or {}
+        robot = robot_settings or {}
         root = wx.BoxSizer(wx.VERTICAL)
         add(root, text(self, "장치 연결", 22, weight="semibold"), border=24)
 
@@ -40,8 +43,10 @@ class DevicesPage(wx.Panel):
         if nmea_path:
             self.file_label.SetToolTip(str(nmea_path))
         self.source_label = text(self, "", 14, weight="semibold")
+        # 하드코딩하지 않는다. 데모 로봇과 실제 로봇을 같은 문구로 보여주면 안 된다.
+        self.robot_label = text(self, robot_status or "데모 로봇", 14, weight="semibold")
         for label, value in (("센서와 GPS", self.source_label),
-                             ("로봇", text(self, "데모 연결", 14)),
+                             ("로봇", self.robot_label),
                              ("NMEA 파일", self.file_label),
                              ("A 영역", text(self, "속도, 시작점 거리", 14)),
                              ("B 영역", text(self, "횡방향, 종방향", 14)),
@@ -80,6 +85,38 @@ class DevicesPage(wx.Panel):
         self.probe_result = text(self, "시험하지 않았습니다.", 13, colour=MUTED)
         add(root, self.probe_result, border=16)
 
+        # --- 로봇 연결 ---
+        # HI-EDGE와 다른 기기다. 주소·포트를 따로 둔다. 규격은 docs/ROBOT_HTTP_API.md다.
+        root.Add(section_bar(self, "로봇 연결 (HTTP)"), 0,
+                 wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, self.FromDIP(16))
+        self.robot_enabled = wx.CheckBox(self, label="실제 로봇으로 전송 (끄면 데모 로봇)")
+        self.robot_enabled.SetValue(bool(robot.get("enabled")))
+        self.robot_enabled.Bind(wx.EVT_CHECKBOX, lambda e: self.apply_robot_mode())
+        add(root, self.robot_enabled, border=16)
+        robot_address = wx.FlexGridSizer(2, self.FromDIP((12, 10)))
+        robot_address.AddGrowableCol(1)
+        self.robot_host = wx.TextCtrl(self, value=str(robot.get("host") or ""))
+        self.robot_port = wx.TextCtrl(self, value=str(robot.get("port") or http_robot.DEFAULT_PORT))
+        for control in (self.robot_host, self.robot_port):
+            input_control(control)
+        for label, control in (("로봇 주소", self.robot_host), ("포트", self.robot_port)):
+            robot_address.Add(text(self, label, 13, colour=MUTED), 0, wx.ALIGN_CENTER_VERTICAL)
+            robot_address.Add(control, 1, wx.EXPAND)
+        root.Add(robot_address, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, self.FromDIP(16))
+        self.robot_apply = button(self, "로봇 주소 적용", self.apply_robot)
+        self.robot_probe = button(self, "로봇 연결 시험", self.run_robot_probe)
+        robot_buttons = wx.BoxSizer(wx.HORIZONTAL)
+        robot_buttons.Add(self.robot_apply, 0, wx.RIGHT, self.FromDIP(8))
+        robot_buttons.Add(self.robot_probe, 0)
+        root.Add(robot_buttons, 0, wx.ALL | wx.ALIGN_LEFT, self.FromDIP(16))
+        self.robot_result = text(self, "", 13, colour=MUTED)
+        add(root, self.robot_result, border=16)
+        add(root, text(self, "시작을 누르면 시험 설정과 target.csv를 보낸 뒤 시작 신호를 보냅니다. "
+                             "시험 중에는 연결 확인을 보내지 않으므로, 미리 확인하려면 "
+                             "'로봇 연결 시험'을 누르세요. 시작한 뒤에는 앱에서 로봇을 멈출 수 없습니다.",
+                       12, colour=MUTED),
+            border=16)
+
         # --- 고장 주입 시나리오 ---
         root.Add(section_bar(self, "실패 상태 시나리오"), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, self.FromDIP(16))
         self.scenario = wx.Choice(self, choices=list(scenarios))
@@ -90,6 +127,10 @@ class DevicesPage(wx.Panel):
         add(root, text(self, "수집 시나리오는 다음 시작부터, 저장 실패는 바로 적용됩니다.", 12, colour=MUTED), border=16)
         self.SetSizer(root)
         self.apply_mode(mode)
+        # 로봇 입력란의 초기 활성 상태만 맞춘다. apply_robot_mode는 안내 문구까지
+        # 바꾸므로 시작 시에는 쓰지 않는다 — 누르지 않은 안내를 띄우면 안 된다.
+        for control in (self.robot_host, self.robot_port, self.robot_probe):
+            control.Enable(bool(robot.get("enabled")))
 
     # --- 모드 ---
 
@@ -141,6 +182,80 @@ class DevicesPage(wx.Panel):
             self.probe_result.SetLabel(message)
             self.probe_result.SetForegroundColour(DANGER)
             self.Layout()
+
+    # --- 로봇 연결 ---
+
+    def apply_robot_mode(self):
+        """체크 상태에 맞게 입력란을 열고 닫는다. 적용은 버튼으로 한다.
+
+        체크만으로 즉시 적용하지 않는 이유는, 주소를 고치는 중에 체크를 켜면 빈
+        주소나 옛 주소로 적용돼 버리기 때문이다.
+        """
+        enabled = self.robot_enabled.GetValue()
+        for control in (self.robot_host, self.robot_port, self.robot_probe):
+            control.Enable(enabled)
+        self.robot_result.SetLabel("'로봇 주소 적용'을 눌러 반영하세요."
+                                   if enabled else "'로봇 주소 적용'을 눌러 데모 로봇으로 돌립니다.")
+        self.robot_result.SetForegroundColour(MUTED)
+        self.Layout()
+
+    def apply_robot(self):
+        """로봇 주소를 적용한다. 거부 사유를 그대로 보여준다."""
+        if self.on_robot is None:
+            return
+        values = self.robot_values()
+        ok, message = self.on_robot(values)
+        self.robot_result.SetLabel(message)
+        self.robot_result.SetForegroundColour(MUTED if ok else DANGER)
+        self.robot_result.Wrap(self.GetClientSize().width - self.FromDIP(48))
+        self.Layout()
+        parent = self.GetParent()
+        if hasattr(parent, "FitInside"):
+            parent.FitInside()
+
+    def show_robot_status(self, status):
+        """현재 로봇 연결을 사실대로 표시한다."""
+        if status:
+            self.robot_label.SetLabel(status)
+            self.Layout()
+
+    def run_robot_probe(self):
+        """로봇에 연결 확인을 한 번 보낸다. 결과는 작업 스레드에서 돌아온다."""
+        if self.on_robot_probe is None:
+            return
+        values = self.robot_values()
+        if not values["host"]:
+            self.robot_result.SetLabel("로봇 주소를 입력하세요.")
+            self.robot_result.SetForegroundColour(DANGER)
+            self.Layout()
+            return
+        self.robot_probe.Enable(False)
+        self.robot_result.SetForegroundColour(MUTED)
+        self.robot_result.SetLabel("확인 중…")
+        self.Layout()
+        self.on_robot_probe(values, self.show_robot_probe_result)
+
+    def show_robot_probe_result(self, ok, message):
+        """작업 스레드가 끝난 뒤 GUI 스레드에서 호출된다."""
+        if not self:
+            return
+        self.robot_probe.Enable(True)
+        self.robot_result.SetForegroundColour(MUTED if ok else DANGER)
+        self.robot_result.SetLabel(message)
+        self.robot_result.Wrap(self.GetClientSize().width - self.FromDIP(48))
+        self.Layout()
+        parent = self.GetParent()
+        if hasattr(parent, "FitInside"):
+            parent.FitInside()
+
+    def robot_values(self):
+        try:
+            port = int(self.robot_port.GetValue().strip())
+        except ValueError:
+            port = http_robot.DEFAULT_PORT
+            self.robot_port.SetValue(str(port))
+        return {"host": self.robot_host.GetValue().strip(), "port": port,
+                "enabled": self.robot_enabled.GetValue()}
 
     def lan_values(self):
         try:
