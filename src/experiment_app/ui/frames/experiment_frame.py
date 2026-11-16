@@ -134,10 +134,11 @@ class ExperimentFrame(wx.Frame):
             self.Layout()
         self.header.render(LABELS[session.state], TONES.get(session.state, "idle"),
                            f"{int(session.elapsed)//60:02}:{int(session.elapsed)%60:02}")
-        # 시작은 세팅 전송이 끝난 뒤에만 누를 수 있다. 세팅을 받지 못한 로봇에
-        # 시작 신호를 보내면 의도와 다른 시험이 돌아간다.
-        robot_ready, robot_reason = self.presenter.sessions.robot_ready()
-        self.header.buttons["start"].Enable(session.state == State.READY and robot_ready)
+        # 시작은 로봇 세팅 전송이 끝나고 입력 소스 확인도 통과한 뒤에만 누를 수 있다.
+        # 세팅을 받지 못한 로봇에 시작 신호를 보내면 의도와 다른 시험이 돌아가고,
+        # 기준점을 등록할 수 없는 상태로 시작하면 변위가 빈 채로 기록된다.
+        start_ready, start_reason = self.presenter.sessions.start_ready()
+        self.header.buttons["start"].Enable(session.state == State.READY and start_ready)
         self.header.buttons["stop"].Enable(session.state in {State.STARTING, State.RUNNING})
         # 그래프는 기록 파일을 읽어 그린다. 기록이 닫히기 전에는 자료가 온전하지 않으므로
         # 측정이 끝나고 정리까지 마친 뒤에만 켠다.
@@ -153,7 +154,8 @@ class ExperimentFrame(wx.Frame):
             models = self.presenter.metrics(snapshot)
             for pane in self.sensors.values():
                 pane.render(models)
-            self.map.render(snapshot, self.scenario == "지도 배경 실패", live=session.state in ACTIVE)
+            self.map.render(snapshot, self.scenario == "지도 배경 실패", live=session.state in ACTIVE,
+                            pre_start=self.presenter.pre_start_fix() if session.state == State.READY else "")
         if self.showing_charts:
             # 그래프 화면에서는 상태바가 그래프 안내를 유지한다.
             pass
@@ -169,13 +171,20 @@ class ExperimentFrame(wx.Frame):
                 detail = ("자료를 끝까지 재생하면 자동으로 끝납니다."
                           if total is None else
                           f"자료 {total:g}초를 끝까지 재생하면 자동으로 끝납니다.")
+            # 수신이 끊기면 그 사실이 먼저 보여야 한다. 화면이 멈춘 것처럼 보이는데
+            # 이유를 모르면 사용자는 장비를 의심할지 앱을 의심할지 알 수 없다.
+            live = self.presenter.source_status()
+            if live:
+                detail = f"{detail}   {live}"
+            if session.gaps:
+                detail = f"{detail}   단절 {session.gaps}회 {session.gap_seconds:.0f}초"
             self.SetStatusText(f"기록 중입니다. {detail}   세션 {session.session_id[:8]}")
         elif session.state == State.STOPPING:
             self.SetStatusText("수집을 멈추고 기록을 정리하는 중입니다…")
         else:
             # 로봇 세팅은 창을 열 때 이미 보냈다. 시작을 막는 사유가 있으면
             # 그것부터 알린다 — 버튼이 왜 눌리지 않는지 화면이 설명해야 한다.
-            detail = robot_reason if not robot_ready else "시작을 누르면 로봇에 시작 신호를 보냅니다."
+            detail = start_reason if not start_ready else "시작을 누르면 기준점을 등록하고 로봇에 시작 신호를 보냅니다."
             self.SetStatusText(f"{detail}   세션 {session.session_id[:8]}")
         if self.closing and self.presenter.sessions.is_idle():
             self.dispose()

@@ -8,14 +8,17 @@
 - WebSocket처럼 밀려 들어오는 소스를 SessionService 수정 없이 끼울 수 있다.
 """
 
+import json
 import time
 
 import pytest
 
+from experiment_app.application import session_service as session_service_module
 from experiment_app.application.session_service import SessionService
 from sample_tests import seeded_services as build_services
 from experiment_app.domain.session import State
 from experiment_app.domain.telemetry import GpsFix, SensorSample
+from experiment_app.domain.test_definition import AppError
 from experiment_app.infrastructure.sources import SystemClock
 from experiment_app.infrastructure.streaming import StreamingSensorSource
 
@@ -242,5 +245,237 @@ def test_source_close_failure_becomes_an_error(tmp_path):
         view = sessions.view()
         assert view.state == State.ERROR
         assert "소스 종료 실패" in view.end_reason
+    finally:
+        main.dispose()
+
+
+# --- 시작 전 소스 확인 (preflight) ---
+
+class CheckedSource(FakeWebSocketSource):
+    """시작 전 확인을 요구하는 소스. 통과 여부를 바깥에서 바꿀 수 있다."""
+
+    def __init__(self, clock, ready=False):
+        super().__init__(clock)
+        self.ready = ready
+        self.checks = 0
+
+    def preflight(self):
+        self.checks += 1
+        return (True, "") if self.ready else (False, "위치가 유효하지 않습니다")
+
+
+def test_start_is_blocked_until_the_source_check_passes(tmp_path):
+    """기준점을 등록할 수 없는 상태에서는 시작을 막고 사유를 보여준다."""
+    main, experiment = build_services(tmp_path)
+    try:
+        sessions = experiment.sessions
+        source = CheckedSource(SystemClock())
+        sessions.set_sources(((("A", "A.0", "속도", "km/h"),)), source, SilentGps())
+        definition = main.service.repository.list()[0]
+        session = sessions.prepare(definition.id, definition.revision)
+        assert wait(lambda: source.checks >= 1)
+        ready, reason = sessions.start_ready()
+        assert ready is False and "위치가 유효하지 않습니다" in reason
+        with pytest.raises(AppError) as caught:
+            sessions.start(session.session_id)
+        assert caught.value.code == "SOURCE_NOT_READY"
+        assert sessions.view().state == State.READY, "거부된 시작이 상태를 바꾸지 않는다"
+    finally:
+        main.dispose()
+
+
+def test_source_check_is_repeated_while_waiting(tmp_path):
+    """fix를 기다리는 동안 다시 확인해서, 창을 닫았다 열지 않아도 버튼이 켜진다."""
+    main, experiment = build_services(tmp_path)
+    try:
+        sessions = experiment.sessions
+        source = CheckedSource(SystemClock())
+        sessions.set_sources(((("A", "A.0", "속도", "km/h"),)), source, SilentGps())
+        sessions.source_recheck_interval = 0.05
+        definition = main.service.repository.list()[0]
+        sessions.prepare(definition.id, definition.revision)
+        assert wait(lambda: sessions.start_ready()[0] is False)
+        # 장치에 fix가 잡혔다. 아무것도 다시 열지 않는다.
+        source.ready = True
+        assert wait(lambda: sessions.start_ready()[0] is True, timeout=3), "스스로 다시 확인해 풀려야 한다"
+    finally:
+        main.dispose()
+
+
+# --- 단절과 복구 ---
+
+GAP_KINDS = {"단절", "복구", "단절 중 종료"}
+
+
+def gap_records(path):
+    """기록 파일에서 단절·복구 사건만 읽는다(표본이 아니라 channel_id가 없다)."""
+    records = []
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if record.get("kind") in GAP_KINDS:
+                records.append(record)
+    return records
+
+
+def test_a_dropout_inside_the_grace_period_resumes_the_same_session(tmp_path):
+    """끊겼다 돌아오면 같은 세션이 그대로 이어진다.
+
+    예전에는 5초만 끊겨도 세션이 끝났다. 실험 창에서 다시 시작할 방법이 없으므로
+    그렇게 끝내면 되살릴 수 없다. 수신 스레드는 1초마다 재접속을 계속 시도하므로
+    기다리는 쪽이 맞다.
+    """
+    main, experiment = build_services(tmp_path)
+    try:
+        clock = SystemClock()
+        source = FakeWebSocketSource(clock)
+        sessions = experiment.sessions
+        sessions.set_sources(((("A", "A.0", "속도", "km/h"),)), source, SilentGps())
+        sessions.dropout_grace = 3.0
+        session = run_until_running(sessions, main.service.repository.list()[0])
+        source.push(session.session_id, 10.0)
+        assert wait(lambda: experiment.telemetry.snapshot().samples != ())
+
+        # 보내지 않는 동안 단절로 기록된다(DROPOUT_AFTER는 0.4초로 줄여 시험한다).
+        monkey = session_service_module.DROPOUT_AFTER
+        session_service_module.DROPOUT_AFTER = 0.4
+        try:
+            assert wait(lambda: sessions.gap_started_at is not None, timeout=3)
+            assert sessions.current.state == State.RUNNING, "기다리는 동안에도 살아 있다"
+            source.push(session.session_id, 11.0)  # 장비가 돌아왔다
+            assert wait(lambda: sessions.current.gaps == 1, timeout=3)
+        finally:
+            session_service_module.DROPOUT_AFTER = monkey
+
+        assert sessions.current.state == State.RUNNING, "복구 후에도 같은 세션이다"
+        assert sessions.current.gap_seconds > 0
+        sessions.stop(session.session_id)
+        assert wait(sessions.is_idle)
+        view = sessions.view()
+        assert view.state == State.STOPPED
+        assert "수신 단절 1회" in view.end_reason, "빈 구간이 있었다는 사실을 사유에 남긴다"
+
+        kinds = [record["kind"] for record in gap_records(experiment.sessions.recorder.path)]
+        assert kinds == ["단절", "복구"], "기록만 보고도 빈 구간의 이유를 알 수 있어야 한다"
+        summary = experiment.sessions.results.get(session.session_id)
+        assert summary["completeness"] == "불완전", "빈 구간이 있으면 온전한 측정이 아니다"
+        assert summary["gaps"] == 1
+    finally:
+        main.dispose()
+
+
+def test_a_dropout_past_the_grace_period_ends_the_session(tmp_path):
+    """허용 시간을 넘기면 기다리지 않고 끝낸다. 사유에 단절임이 드러난다."""
+    main, experiment = build_services(tmp_path)
+    try:
+        sessions = experiment.sessions
+        sessions.set_sources(((("A", "A.0", "속도", "km/h"),)),
+                             FakeWebSocketSource(SystemClock()), SilentGps())
+        sessions.dropout_grace = 0.5
+        run_until_running(sessions, main.service.repository.list()[0])
+        assert wait(sessions.is_idle, timeout=5)
+        view = sessions.view()
+        assert view.state == State.ERROR
+        assert "수신 단절" in view.end_reason and "허용" in view.end_reason
+    finally:
+        main.dispose()
+
+
+def test_an_evicted_subscription_ends_the_session_immediately(tmp_path):
+    """4001은 재접속하지 않으므로 기다릴 이유가 없다. 바로 끝내고 사유를 밝힌다."""
+    main, experiment = build_services(tmp_path)
+    try:
+        source = FakeWebSocketSource(SystemClock())
+        source.evicted = False
+        sessions = experiment.sessions
+        sessions.set_sources(((("A", "A.0", "속도", "km/h"),)), source, SilentGps())
+        sessions.dropout_grace = 60.0
+        session = run_until_running(sessions, main.service.repository.list()[0])
+        source.push(session.session_id, 10.0)
+        assert wait(lambda: experiment.telemetry.snapshot().samples != ())
+        source.evicted = True  # 다른 프로그램이 구독을 가져갔다
+        assert wait(sessions.is_idle, timeout=5)
+        view = sessions.view()
+        assert view.state == State.ERROR
+        assert "4001" in view.end_reason
+    finally:
+        main.dispose()
+
+
+def test_window_close_releases_what_the_source_holds_on_the_device(tmp_path):
+    """기준점처럼 장치에 잡아 둔 것은 **창을 닫을 때** 놓는다.
+
+    세션이 끝날 때 놓으면 단절로 끊긴 뒤 다시 시작할 때 기준점이 옮겨간다.
+    """
+    main, experiment = build_services(tmp_path)
+    try:
+        released = []
+
+        class HoldingSource(CheckedSource):
+            def release(self):
+                released.append(True)
+
+        sessions = experiment.sessions
+        source = HoldingSource(SystemClock(), ready=True)
+        sessions.set_sources(((("A", "A.0", "속도", "km/h"),)), source, SilentGps())
+        definition = main.service.repository.list()[0]
+        session = sessions.prepare(definition.id, definition.revision)
+        assert wait(lambda: sessions.start_ready()[0] is True)
+        assert sessions.start(session.session_id)
+        assert wait(lambda: sessions.current.state == State.RUNNING)
+        sessions.stop(session.session_id)
+        assert wait(sessions.is_idle)
+        assert released == [], "세션이 끝나는 것으로는 놓지 않는다"
+        sessions.release_ready()  # 실험 창을 닫는다
+        assert released == [True]
+    finally:
+        main.dispose()
+
+
+def test_window_close_is_not_blocked_by_a_release_failure(tmp_path):
+    """창이 안 닫히면 사용자가 빠져나갈 길이 없다. 실패는 사유로만 남긴다."""
+    main, experiment = build_services(tmp_path)
+    try:
+        class BadRelease(CheckedSource):
+            def release(self):
+                raise AppError("LAN_REF_UNAVAILABLE", "기준점을 지우지 못했습니다")
+
+        sessions = experiment.sessions
+        sessions.set_sources(((("A", "A.0", "속도", "km/h"),)),
+                             BadRelease(SystemClock(), ready=True), SilentGps())
+        definition = main.service.repository.list()[0]
+        sessions.prepare(definition.id, definition.revision)
+        sessions.release_ready()
+        assert "기준점을 지우지 못했습니다" in sessions.source_reason
+    finally:
+        main.dispose()
+
+
+def test_source_check_keeps_watching_without_flicker(tmp_path):
+    """통과한 뒤에도 계속 지켜보되, 확인 중에 버튼이 깜빡이지 않는다.
+
+    한 번 통과했다고 멈추면 차가 움직이기 시작한 것을 놓친다. 반대로 확인 중이라고
+    직전 결과를 지우면 5초마다 시작 버튼이 꺼졌다 켜진다.
+    """
+    main, experiment = build_services(tmp_path)
+    try:
+        sessions = experiment.sessions
+        source = CheckedSource(SystemClock(), ready=True)
+        sessions.set_sources(((("A", "A.0", "속도", "km/h"),)), source, SilentGps())
+        sessions.source_recheck_interval = 0.01
+        definition = main.service.repository.list()[0]
+        sessions.prepare(definition.id, definition.revision)
+        assert wait(lambda: sessions.start_ready()[0] is True)
+        checks = source.checks
+        for _ in range(30):
+            assert sessions.start_ready()[0] is True, "확인이 도는 동안에도 켜져 있어야 한다"
+            time.sleep(0.01)
+        assert source.checks > checks, "준비 상태에서는 계속 다시 확인한다"
+        # 차가 움직이기 시작하면 스스로 막힌다.
+        source.ready = False
+        assert wait(lambda: sessions.start_ready()[0] is False, timeout=3)
     finally:
         main.dispose()

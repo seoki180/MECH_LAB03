@@ -27,6 +27,23 @@ class GpsFix:
 
 
 @dataclass(frozen=True)
+class StreamGap:
+    """수신이 끊기고 돌아온 사실. 기록에 남겨 빈 구간의 이유를 밝힌다.
+
+    표본이 아니다(``channel_id`` 가 없다). 빈 구간을 그냥 두면 나중에 기록만 보고는
+    자료가 왜 없는지 알 수 없고, 단절이 있었던 시험이 온전한 시험처럼 보인다.
+    """
+
+    session_id: str
+    kind: str                      # "단절" 또는 "복구"
+    received_time_utc: str
+    monotonic_received: float
+    elapsed: float
+    duration_s: float | None = None
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class TelemetrySnapshot:
     session_id: str
     samples: tuple[SensorSample, ...]

@@ -47,6 +47,10 @@ class Session:
     end_reason: str = ""
     elapsed: float = 0
     cleaned_up: bool = True
+    # 수신이 끊겼다 돌아온 횟수와 그 합계 시간(초). 자료가 비어 있는 구간이 있었다는
+    # 뜻이므로 결과에서 '불완전'으로 드러난다.
+    gaps: int = 0
+    gap_seconds: float = 0.0
 
     def transition(self, state, **updates):
         if state not in TRANSITIONS.get(self.state, set()):

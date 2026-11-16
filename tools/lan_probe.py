@@ -33,14 +33,17 @@ def watch(host, port, verify, seconds):
     tls = hiedge.tls_context(None, verify)
     url = hiedge.stream_url(host, port)
     kinds = Counter()
+    reasons = Counter()
     total = valid = gaps = 0
     coordinates = 0
+    references = 0
     first_speed = last_speed = None
     with connect(url, ssl=tls, proxy=None, compression=None,
-                 open_timeout=6, close_timeout=1, max_size=65536) as ws:
+                 open_timeout=6, close_timeout=1, max_size=hiedge.MAX_MESSAGE_BYTES) as ws:
         hello = json.loads(ws.recv(timeout=6))
         print(f"hello: stream_id={hello.get('stream_id')} "
-              f"{hello.get('publication_hz')} Hz replay={hello.get('replay')}")
+              f"{hello.get('publication_hz')} Hz replay={hello.get('replay')} "
+              f"구독 {hello.get('max_clients')}개 {hello.get('subscription_policy')}")
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             message = json.loads(ws.recv(timeout=3))
@@ -59,8 +62,15 @@ def watch(host, port, verify, seconds):
             latitude, _ = hiedge._coordinates(message)
             if latitude is not None:
                 coordinates += 1
+            else:
+                position = message.get("position") or {}
+                reasons[position.get("reason") or "사유 없음"] += 1
+            references = len(message.get("position_offsets") or ())
     print(f"\n{seconds}초 동안 {total}개 수신 · 유효 {valid} · 단절표시 {gaps}")
-    print(f"좌표 포함 메시지: {coordinates}" + ("" if coordinates else "  (아직 좌표가 오지 않습니다)"))
+    print(f"위치 유효 메시지: {coordinates}" + ("" if coordinates else "  (위치가 유효하지 않습니다)"))
+    if reasons:
+        print("위치 무효 사유: " + ", ".join(f"{k}={v}" for k, v in reasons.items()))
+    print(f"장치에 등록된 기준점: {references}개")
     if kinds:
         print("measurement_kind: " + ", ".join(f"{k}={v}" for k, v in kinds.items()))
     if valid:

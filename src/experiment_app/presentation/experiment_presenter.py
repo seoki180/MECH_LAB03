@@ -135,6 +135,32 @@ class ExperimentPresenter:
             return False, "이 전송은 연결 시험을 제공하지 않습니다."
         return transport.probe(timeout=3)
 
+    def pre_start_fix(self):
+        """시작 전에 보여 줄 장치 위치 상태 한 줄. 없으면 빈 문자열.
+
+        **시작을 누르기 전에는 WebSocket을 열지 않는다.** 그래서 측정 화면은 비어
+        있고, 사용자는 GPS가 안 잡힌 것인지 아직 받고 있지 않은 것인지 구별할 수 없다.
+        시작 전 확인(preflight)이 이미 ``/api/latest`` 로 읽어 둔 사실을 그대로 보여
+        주어 그 차이를 메운다.
+
+        이 값은 **측정값이 아니다.** 기록하지도, 궤적에 넣지도 않는다.
+        """
+        fix = getattr(self.sessions.sensors, "device_fix", None)
+        if not fix:
+            return ""
+        parts = ["시작 전 장치 상태"]
+        parts.append(fix.get("label") or ("위치 유효" if fix.get("valid") else "fix 없음"))
+        if fix.get("satellites") is not None:
+            parts.append(f"위성 {fix['satellites']}개")
+        if fix.get("latitude") is not None:
+            parts.append(f"{fix['latitude']:.6f}, {fix['longitude']:.6f}")
+        elif not fix.get("valid"):
+            parts.append("좌표 없음")
+        speed = fix.get("speed_kmh")
+        if speed is not None:
+            parts.append(f"{speed:.2f} km/h")
+        return " · ".join(parts) + "\n시작을 누르면 이 위치가 기준점이 되고 기록이 시작됩니다."
+
     def source_status(self):
         """현재 입력원을 사실대로 한 줄로. 설정·실험 헤더가 함께 쓴다."""
         if self.source_mode != "lan":

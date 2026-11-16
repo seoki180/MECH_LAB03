@@ -85,7 +85,7 @@ class GpsMapPane(wx.Panel):
             return f"위도 {format_coordinate(lat)}, 경도 {format_coordinate(lon)} (마지막 유효)"
         return "위도 —, 경도 —"
 
-    def render(self, snapshot, map_failed=False, live=True):
+    def render(self, snapshot, map_failed=False, live=True, pre_start=""):
         gps = snapshot.gps
         self.map.render(snapshot.track, self.follow, map_failed, valid=bool(live and gps and gps.latitude is not None))
         self.coordinates.SetLabel(self.coordinate_text(snapshot))
@@ -100,6 +100,10 @@ class GpsMapPane(wx.Panel):
                 label = "fix 없음. 유효 위치를 기다리는 중"
             shown_time = snapshot.last_valid_gps.received_time_utc if snapshot.last_valid_gps else gps.received_time_utc
             self.status.SetLabel(label + f"\n마지막 유효 위치 {shown_time[11:19]} UTC" if snapshot.last_valid_gps else label)
+        elif pre_start:
+            # 아직 시작하지 않아 받은 표본이 없다. 장치가 위치를 잡고 있는지는
+            # 보여 주되, 측정값이 아님을 문구로 분명히 한다.
+            self.status.SetLabel(pre_start)
         if snapshot.start_gps:
             start = snapshot.start_gps
             movement = snapshot.movement
