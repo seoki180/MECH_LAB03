@@ -10,10 +10,16 @@ from experiment_app.ui.adapters.mercator import TILE_SIZE, lonlat_to_pixel, pixe
 
 # 실제로 타일이 있는 구간. 이 밖으로 나가면 격자만 뜨거나 흐릿하게 늘어난 그림이 된다.
 # 팩들의 줌 범위를 합친 값은 구역마다 타일 유무가 달라 경계로 쓸 수 없다.
-MIN_ZOOM, MAX_ZOOM = 13, 19
+# 아래 한계는 전국 개요 팩(z0–11)을 함께 두는 구성을 전제로 한다. 구역 팩 밖으로
+# 나갔을 때 축소해서 '지금 어디쯤인지'를 볼 수 있어야 하므로 13이 아니라 8이다.
+MIN_ZOOM, MAX_ZOOM = 8, 19
 BITMAP_CACHE_LIMIT = 256
 # 휠 한 노치가 움직이는 줌 단계. 트랙패드는 잘게 여러 번 보내므로 1보다 작게 둔다.
 WHEEL_STEP = 0.5
+# 타일팩도 GPS fix도 없을 때 지도를 둘 자리(한반도 중앙). **표시 시점일 뿐 측정값이
+# 아니다.** 좌표 readout과 궤적은 이 값을 쓰지 않는다. 중심이 비어 있으면 끌기조차
+# 기준이 없어 지도가 멈춘 것처럼 보이므로 시점만 채워 둔다.
+FALLBACK_CENTER = (36.5, 127.8)
 
 
 class TileMapView(wx.Panel):
@@ -23,8 +29,10 @@ class TileMapView(wx.Panel):
         self.SetMinSize(self.FromDIP((200, 130)))
         self.tiles = tiles
         self.track = ()
-        # GPS fix 전에는 타일팩 중심을 보여준다. 팩이 없으면 첫 fix까지 배경만 그린다.
-        self.center = tiles.center
+        # GPS fix 전에는 타일팩 중심을 보여준다. 팩도 없으면 임시 시점을 쓰고
+        # 첫 fix에서 실제 위치로 옮긴다(guess 플래그).
+        self.center = tiles.center or FALLBACK_CENTER
+        self.center_is_guess = tiles.center is None
         self.zoom = 15
         self.drag = None
         self.failed = False
@@ -45,8 +53,20 @@ class TileMapView(wx.Panel):
 
     def render(self, track, follow, failed=False, valid=True):
         self.track, self.failed, self.valid, self.follow = track, failed, valid, follow
-        if track and (follow or self.center is None):
+        if track and (follow or self.center_is_guess):
             self.center = track[-1]
+            self.center_is_guess = False
+        self.Refresh(False)
+
+    def recenter(self):
+        """추적을 켜고 중심을 현재 위치로 되돌린다.
+
+        유효 fix가 하나도 없으면 돌아갈 '현재 위치'가 없다. 그때는 타일팩 중심
+        (개요 팩이 있으면 그 중앙)으로 보내 적어도 배경이 보이는 자리에 둔다.
+        """
+        self.follow = True
+        self.center = self.track[-1] if self.track else (self.tiles.center or FALLBACK_CENTER)
+        self.center_is_guess = not self.track
         self.Refresh(False)
 
     def zoom_to(self, zoom, anchor=None):
@@ -133,12 +153,24 @@ class TileMapView(wx.Panel):
         return drawn
 
     def draw_grid(self, gc, width, height):
+        """타일이 없는 구역의 배경 격자.
+
+        격자를 화면에 고정하면 끌어도 그림이 그대로라 지도가 멈춘 것처럼 보인다.
+        지도 좌표(웹 메르카토르 픽셀)에 맞춰 흘려서 끌기·확대가 눈에 보이게 한다.
+        """
         gc.SetPen(wx.Pen("#D8E1E8"))
         gap = self.FromDIP(32)
-        for x in range(0, width, gap):
+        center_x, center_y = lonlat_to_pixel(self.center[1], self.center[0], self.zoom)
+        left, top = center_x - width / 2, center_y - height / 2
+        offset_x, offset_y = -(left % gap), -(top % gap)
+        x = offset_x
+        while x < width:
             gc.StrokeLine(x, 0, x, height)
-        for y in range(0, height, gap):
+            x += gap
+        y = offset_y
+        while y < height:
             gc.StrokeLine(0, y, width, y)
+            y += gap
 
     def draw_track(self, gc, width, height):
         center_x, center_y = lonlat_to_pixel(self.center[1], self.center[0], self.zoom)
@@ -166,10 +198,10 @@ class TileMapView(wx.Panel):
         gc = wx.GraphicsContext.Create(dc)
         if not gc:
             return
-        drawn = self.center is not None and not self.failed and self.draw_tiles(gc, width, height)
+        drawn = not self.failed and self.draw_tiles(gc, width, height)
         if not drawn:
             self.draw_grid(gc, width, height)
-        if self.center and self.track:
+        if self.track:
             self.draw_track(gc, width, height)
         gc.SetFont(self.GetFont(), wx.Colour("#17212B" if drawn else "#596A7A"))
         gc.DrawText(self.notice(drawn), 12, 12)
@@ -182,7 +214,7 @@ class TileMapView(wx.Panel):
         if not self.tiles.available:
             return "오프라인 타일팩 없음 · 좌표/궤적 유지"
         if not drawn:
-            return "이 구역의 타일 없음 · 좌표/궤적 유지"
+            return "이 구역의 타일 없음 · 축소하면 개요 팩 · 좌표/궤적 유지"
         return f"z{self.zoom:.1f}" + (" · 확대 표시" if self.zoom > self.tiles.max_zoom else "")
 
     def dispose(self):

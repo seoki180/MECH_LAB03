@@ -68,11 +68,9 @@ class GpsMapPane(wx.Panel):
         self.map.follow = False
 
     def recenter(self):
+        """'현재 위치' 버튼. 유효 fix가 없으면 지도 쪽이 타일팩 중심으로 되돌린다."""
         self.follow = True
-        self.map.follow = True
-        if self.map.track:
-            self.map.center = self.map.track[-1]
-            self.map.Refresh(False)
+        self.map.recenter()
 
     @staticmethod
     def coordinate_text(snapshot):
