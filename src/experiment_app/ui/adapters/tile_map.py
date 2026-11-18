@@ -48,8 +48,13 @@ class TileMapView(wx.Panel):
         self.Bind(wx.EVT_MOUSEWHEEL, self.wheel)
         self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, lambda e: setattr(self, "drag", None))
         # 터치를 지원하지 않는 플랫폼에서는 죽은 핸들러를 남기지 않는다.
-        if self.EnableTouchEvents(wx.TOUCH_ZOOM_GESTURE):
+        # **확대만 켜면 안 된다.** Windows는 설정한 제스처만 보내고 나머지 손가락
+        # 입력은 마우스 흉내로 돌리는데, 그 흉내는 길게 누른 뒤에야 버튼 누름으로
+        # 바뀐다. 그래서 태블릿에서 지도를 끌면 거의 움직이지 않는다. pan 제스처를
+        # 함께 받아 직접 처리한다.
+        if self.EnableTouchEvents(wx.TOUCH_ZOOM_GESTURE | wx.TOUCH_PAN_GESTURES):
             self.Bind(wx.EVT_GESTURE_ZOOM, self.pinch)
+            self.Bind(wx.EVT_GESTURE_PAN, self.pan_gesture)
 
     def render(self, track, follow, failed=False, valid=True):
         self.track, self.failed, self.valid, self.follow = track, failed, valid, follow
@@ -112,14 +117,29 @@ class TileMapView(wx.Panel):
             self.ReleaseMouse()
         self.drag = None
 
+    def shift(self, dx, dy):
+        """화면에서 dx, dy 픽셀만큼 지도를 민다(손가락/커서를 따라간다)."""
+        if not self.center:
+            return
+        x, y = lonlat_to_pixel(self.center[1], self.center[0], self.zoom)
+        lon, lat = pixel_to_lonlat(x - dx, y - dy, self.zoom)
+        self.center = (lat, lon)
+        self.center_is_guess = False
+        self.Refresh(False)
+
+    def pan_gesture(self, event):
+        """손가락 끌기. 마우스 흉내를 기다리지 않고 제스처로 바로 움직인다."""
+        if event.IsGestureStart() or self.follow:
+            # 제스처 시작 플래그를 못 받는 경우가 있다. 추적이 켜져 있으면 그것부터 끈다.
+            self.on_pan()
+        delta = event.GetDelta()
+        self.shift(delta.x, delta.y)
+
     def motion(self, event):
         if not self.follow and self.drag is not None and event.Dragging() and self.center:
             position = event.GetPosition()
-            x, y = lonlat_to_pixel(self.center[1], self.center[0], self.zoom)
-            lon, lat = pixel_to_lonlat(x - (position.x - self.drag.x), y - (position.y - self.drag.y), self.zoom)
-            self.center = (lat, lon)
+            self.shift(position.x - self.drag.x, position.y - self.drag.y)
             self.drag = position
-            self.Refresh(False)
 
     def bitmap(self, zoom, x, y):
         key = (zoom, x, y)

@@ -79,6 +79,10 @@ python tools/shrink_map_pack.py asset/maps/korea-z14.mbtiles \
 배경 그림이 없어도 끌기·확대가 눈에 보입니다. 타일팩이 하나도 없으면 첫 GPS fix 전까지는
 한반도 중앙을 임시 시점으로 쓰며, 이 값은 표시 시점일 뿐 좌표·궤적에는 쓰지 않습니다.
 
+손가락 끌기는 마우스 흉내가 아니라 **pan 제스처**(`EVT_GESTURE_PAN`)로 처리합니다. Windows는
+`EnableTouchEvents`로 켠 제스처만 보내고 나머지 터치는 마우스로 흉내내는데, 그 흉내는 길게
+누른 뒤에야 버튼 누름이 되어 태블릿에서 지도가 거의 끌리지 않습니다.
+
 ### OSM 지도 (도로·건물)
 
 OSM 원본(`*.osm.pbf`)을 tilemaker로 벡터 타일팩으로 만든 뒤, tileserver-gl로 렌더링해 래스터로 굽습니다.
