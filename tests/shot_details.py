@@ -48,6 +48,7 @@ def dump():
     row("시험 이름", details.heading)
     row("[시험 가져오기]", details.file_buttons["import"])
     row("[시험 내보내기]", details.file_buttons["export"])
+    row("[시험 설정]", details.file_buttons["settings"])
     row("상태 칩", details.mode)
     print("시험시나리오 구역")
     row("상태 칩", details.scenario.state)

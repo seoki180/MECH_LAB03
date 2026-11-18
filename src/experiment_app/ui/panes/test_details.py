@@ -22,7 +22,13 @@ class TestDetailsPane(WheelScrolledPanel):
         self.file_buttons = {
             "import": button(self, "시험 가져오기", commands.get("import", lambda: None)),
             "export": button(self, "시험 내보내기", commands.get("export", lambda: None)),
+            "settings": button(self, "시험 설정", commands.get("settings", lambda: None)),
         }
+        # '시험 설정'은 라벨이 짧아 저절로는 좁아진다. 옆 버튼과 같은 너비로 맞추고
+        # 높이는 공통 버튼 높이를 그대로 둔다.
+        settings_button = self.file_buttons["settings"]
+        settings_button.SetMinSize(wx.Size(self.file_buttons["export"].GetBestSize().width,
+                                           settings_button.GetMinSize().height))
         for key, control in self.file_buttons.items():
             title_row.Add(control, 0, wx.ALIGN_CENTER_VERTICAL | (wx.LEFT if key != "import" else 0),
                           self.FromDIP(8))
@@ -80,6 +86,8 @@ class TestDetailsPane(WheelScrolledPanel):
         self.file_buttons["import"].Enable(files_enabled)
         self.file_buttons["export"].Show(valid)
         self.file_buttons["export"].Enable(files_enabled and valid and bool(definition.revision))
+        # 시험 설정은 아직 빈 창만 연다. 선택된 시험이 있을 때만 보인다.
+        self.file_buttons["settings"].Show(valid)
         self.GetSizer().Show(self.facts, valid, recursive=True)
         self.summary.Show(not valid)
         self.spec.set_advanced_shown(valid and self.expanded)

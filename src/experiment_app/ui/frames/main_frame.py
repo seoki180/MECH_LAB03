@@ -9,6 +9,7 @@ from experiment_app.ui.pages.tests_page import TestsPage
 from experiment_app.ui.dialogs.settings import SettingsDialog
 from experiment_app.ui.dialogs.results import ResultsDialog
 from .experiment_frame import ExperimentFrame
+from .test_settings_frame import TestSettingsFrame
 
 
 class MainFrame(wx.Frame):
@@ -22,6 +23,7 @@ class MainFrame(wx.Frame):
         self.sessions = experiment_presenter.sessions
         self.scenarios = scenarios
         self.settings_dialog = None
+        self.test_settings = None
         self.result_dialog = None
         self.selected_group = next(iter(self.repository.groups()), None)
         self.experiment = None
@@ -41,6 +43,7 @@ class MainFrame(wx.Frame):
         root.Add(self.header, 0, wx.EXPAND)
         self.tests = TestsPage(self, fields, self.select, self.reorder, self.patch,
                                {"import": self.import_test, "export": self.export_test,
+                                "settings": self.open_test_settings,
                                 "scenario_import": self.import_scenario,
                                 "scenario_clear": self.clear_scenario})
         root.Add(self.tests, 1, wx.EXPAND)
@@ -122,6 +125,19 @@ class MainFrame(wx.Frame):
             self.SetStatusText("시험시나리오를 비웠습니다.")
         self.presenter.clear_scenario(done)
         self.tick()
+
+    def open_test_settings(self):
+        """시험 설정 창을 연다. 아직 내용이 없는 빈 창이며, 하나만 띄운다."""
+        if self.test_settings is not None:
+            self.test_settings.Raise()
+            return
+        self.test_settings = TestSettingsFrame(self)
+        self.test_settings.Bind(wx.EVT_CLOSE, self.close_test_settings)
+        self.test_settings.Show()
+
+    def close_test_settings(self, event):
+        self.test_settings = None
+        event.Skip()
 
     def export_test(self):
         """현재 시험 폴더를 통째로 고른 위치에 복사한다."""
